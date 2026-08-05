@@ -475,6 +475,7 @@ def read_sht20_sensor(bus_id: int = 10, address: int = 0x40) -> tuple:
         smbus2 = None
 
     if smbus2 is None:
+        log.warning("⚠️ Thư viện 'smbus2' chưa được cài đặt trong Python/Container. Không thể đọc I2C.")
         return None, None
 
     try:
@@ -505,7 +506,7 @@ def read_sht20_sensor(bus_id: int = 10, address: int = 0x40) -> tuple:
 
             return temp_c, humi
     except Exception as e:
-        log.debug("⚠️ SHT20 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
+        log.warning("⚠️ SHT20 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
         return None, None
 
 
@@ -543,7 +544,7 @@ def read_ads1115_voltages(bus_id: int = 10, address: int = 0x49) -> dict:
             v_pin = (raw / 32767.0) * 4.096
             return max(0.0, v_pin)
         except Exception as ex:
-            log.debug("ADS1115 channel %d read error: %s", channel, ex)
+            log.warning("⚠️ ADS1115 channel %d read error: %s", channel, ex)
             return None
 
     try:
@@ -559,7 +560,7 @@ def read_ads1115_voltages(bus_id: int = 10, address: int = 0x49) -> dict:
                 "solar_voltage": sol_v,
             }
     except Exception as e:
-        log.debug("⚠️ ADS1115 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
+        log.warning("⚠️ ADS1115 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
         return {"battery_voltage": None, "solar_voltage": None}
 
 
