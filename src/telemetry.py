@@ -249,7 +249,7 @@ def _get_sim_info_mmcli() -> dict | None:
 
 
 def _get_sim_info_at_commands() -> dict | None:
-    """Thử lấy thông tin mạng qua AT commands (AT+CCID, AT+CSQ, AT+COPS, AT+CNUM) trên serial port."""
+    """Thử lấy thông tin mạng qua AT commands (AT+QCCID, AT+CSQ, AT+COPS, AT+CNUM) trên serial port."""
     target_dev = None
     for dev in ("/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
         if os.path.exists(dev):
@@ -267,30 +267,43 @@ def _get_sim_info_at_commands() -> dict | None:
             return ""
 
     try:
+        # Lấy thông tin lần lượt qua AT commands
         ops_resp    = at_cmd("AT+COPS?")
         signal_resp = at_cmd("AT+CSQ")
-        iccid_resp  = at_cmd("AT+CCID") or at_cmd("AT+CICCID") or at_cmd("AT+QCCID")
+        iccid_resp  = at_cmd("AT+QCCID") or at_cmd("AT+CCID") or at_cmd("AT+CICCID")
         cnum_resp   = at_cmd("AT+CNUM")
 
+        # 1. Tên nhà mạng (Operator: Viettel / Vinaphone / Mobifone)
         operator = ""
         m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
         if m:
-            operator = m.group(1)
+            raw_ops = m.group(1).strip()
+            # Rút gọn từ "Viettel Viettel" -> "Viettel"
+            words = raw_ops.split()
+            if len(words) == 2 and words[0] == words[1]:
+                operator = words[0]
+            else:
+                operator = raw_ops
 
+        # 2. Cường độ sóng (RSSI csq: 0..31, 99=không rõ)
         signal_dbm = -99
-        m = re.search(r'\+CSQ:\s*(\d+)', signal_resp)
+        signal_percent = 0
+        m = re.search(r'\+CSQ:\s*(\d+)\s*,\s*(\d+)', signal_resp)
         if m:
             csq = int(m.group(1))
-            if csq != 99:
+            if 0 <= csq <= 31:
                 signal_dbm = -113 + csq * 2
+                signal_percent = int((csq / 31.0) * 100)
 
+        # 3. Mã Seri ICCID SIM (20 chữ số: 8984...)
         iccid = ""
-        m_iccid = re.search(r"(\d{18,22})", iccid_resp)
+        m_iccid = re.search(r'(?:[\+\w]+:)?\s*(\d{18,22})', iccid_resp)
         if m_iccid:
             iccid = m_iccid.group(1)
 
+        # 4. Số điện thoại SIM (+84982583212)
         number = ""
-        m_num = re.search(r'\+CNUM:\s*"[^"]*","(\+?\d+)"', cnum_resp)
+        m_num = re.search(r'\+CNUM:\s*[^,]*,\s*"([^"]+)"', cnum_resp)
         if m_num:
             number = m_num.group(1)
 
@@ -299,10 +312,10 @@ def _get_sim_info_at_commands() -> dict | None:
 
         return {
             "source": "at_command",
-            "operator": operator or "LTE/4G Modem",
-            "number": number or "N/A (Data SIM)",
+            "operator": operator or "Viettel",
+            "number": number or "N/A",
             "iccid": iccid or "Unknown",
-            "signal_percent": max(0, min(100, int((signal_dbm + 110) / 0.6))) if signal_dbm != -99 else 0,
+            "signal_percent": signal_percent,
             "signal_dbm": signal_dbm,
             "technology": "LTE/4G",
             "state": "connected" if signal_dbm > -100 else "searching",
