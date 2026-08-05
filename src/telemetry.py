@@ -249,7 +249,13 @@ def _get_sim_info_mmcli() -> dict | None:
 
 
 def _get_sim_info_at_commands() -> dict | None:
-    """Thử lấy thông tin mạng qua AT commands (AT+QCCID, AT+CSQ, AT+COPS, AT+CNUM) trên serial port."""
+    """
+    Thử lấy thông tin mạng qua AT commands trực tiếp trên cổng Serial bằng Python thuần:
+    - AT+QCCID -> ICCID (89840480009206559331)
+    - AT+CNUM  -> Phone (+84982583212)
+    - AT+CSQ   -> Signal (RSSI 0..31 -> dBm & %)
+    - AT+COPS  -> Operator (Viettel)
+    """
     target_dev = None
     for dev in ("/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
         if os.path.exists(dev):
@@ -259,33 +265,70 @@ def _get_sim_info_at_commands() -> dict | None:
     if not target_dev:
         return None
 
-    def at_cmd(cmd: str, timeout=1.2) -> str:
+    def send_at(cmd: str, timeout=1.0) -> str:
+        """Mở cổng serial non-blocking và gửi/đọc AT command bằng Python thuần."""
+        if not os.path.exists(target_dev):
+            return ""
         try:
-            cmd_line = f"exec 3<>{target_dev}; stty -F {target_dev} 115200 raw -echo 2>/dev/null; echo -e '{cmd}\\r' >&3; timeout {timeout} cat <&3 2>/dev/null; exec 3>&-"
-            return _run_cmd(cmd_line, timeout=timeout + 1.0)
+            fd = os.open(target_dev, os.O_RDWR | os.O_NONBLOCK)
+            try:
+                try:
+                    import termios
+                    attr = termios.tcgetattr(fd)
+                    attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
+                    termios.tcsetattr(fd, termios.TCSANOW, attr)
+                except Exception:
+                    pass
+
+                # Flush any leftover bytes in buffer
+                try:
+                    os.read(fd, 1024)
+                except OSError:
+                    pass
+
+                # Gửi lệnh AT
+                full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
+                os.write(fd, full_cmd)
+
+                # Đọc phản hồi tới khi gặp OK hoặc ERROR
+                resp = bytearray()
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    try:
+                        chunk = os.read(fd, 256)
+                        if chunk:
+                            resp.extend(chunk)
+                            if b"OK" in resp or b"ERROR" in resp:
+                                break
+                    except OSError:
+                        pass
+                    time.sleep(0.05)
+
+                return resp.decode("utf-8", errors="ignore")
+            finally:
+                os.close(fd)
         except Exception:
             return ""
 
     try:
-        # Lấy thông tin lần lượt qua AT commands
-        ops_resp    = at_cmd("AT+COPS?")
-        signal_resp = at_cmd("AT+CSQ")
-        iccid_resp  = at_cmd("AT+QCCID") or at_cmd("AT+CCID") or at_cmd("AT+CICCID")
-        cnum_resp   = at_cmd("AT+CNUM")
+        # Lấy phản hồi từ 4 lệnh AT chính
+        ops_resp    = send_at("AT+COPS?")
+        signal_resp = send_at("AT+CSQ")
+        iccid_resp  = send_at("AT+QCCID") or send_at("AT+CCID") or send_at("AT+CICCID")
+        cnum_resp   = send_at("AT+CNUM")
 
-        # 1. Tên nhà mạng (Operator: Viettel / Vinaphone / Mobifone)
+        # 1. Nhà mạng (+COPS: 0,0,"Viettel Viettel",7)
         operator = ""
         m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
         if m:
             raw_ops = m.group(1).strip()
-            # Rút gọn từ "Viettel Viettel" -> "Viettel"
             words = raw_ops.split()
             if len(words) == 2 and words[0] == words[1]:
                 operator = words[0]
             else:
                 operator = raw_ops
 
-        # 2. Cường độ sóng (RSSI csq: 0..31, 99=không rõ)
+        # 2. Cường độ sóng (+CSQ: 29,99) -> lấy số 29 đầu tiên
         signal_dbm = -99
         signal_percent = 0
         m = re.search(r'\+CSQ:\s*(\d+)\s*,\s*(\d+)', signal_resp)
@@ -295,13 +338,13 @@ def _get_sim_info_at_commands() -> dict | None:
                 signal_dbm = -113 + csq * 2
                 signal_percent = int((csq / 31.0) * 100)
 
-        # 3. Mã Seri ICCID SIM (20 chữ số: 8984...)
+        # 3. Mã Seri ICCID SIM (+QCCID: 89840480009206559331)
         iccid = ""
         m_iccid = re.search(r'(?:[\+\w]+:)?\s*(\d{18,22})', iccid_resp)
         if m_iccid:
             iccid = m_iccid.group(1)
 
-        # 4. Số điện thoại SIM (+84982583212)
+        # 4. Số điện thoại (+CNUM: ,"+84982583212",145)
         number = ""
         m_num = re.search(r'\+CNUM:\s*[^,]*,\s*"([^"]+)"', cnum_resp)
         if m_num:
@@ -311,7 +354,7 @@ def _get_sim_info_at_commands() -> dict | None:
             return None
 
         return {
-            "source": "at_command",
+            "source": f"at_command ({target_dev})",
             "operator": operator or "Viettel",
             "number": number or "N/A",
             "iccid": iccid or "Unknown",
