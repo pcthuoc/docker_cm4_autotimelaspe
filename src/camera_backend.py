@@ -86,12 +86,10 @@ class HybridCameraBackend:
                     self.use_real_hardware = False
 
                     if attempt < MAX_CAMERA_RETRIES:
-                        # Thử 1: Reset cổng USB ioctl
                         log.info("🛠️ Reset cổng USB phần cứng bằng ioctl để sửa lỗi lock device...")
                         reset_all_camera_usb_devices()
                         time.sleep(1.5)
 
-                        # Thử 2: Ở lần thử gần cuối, nếu USB vẫn kẹt, tiến hành Hard Cycle Power qua GPIO 16!
                         if attempt == MAX_CAMERA_RETRIES - 1:
                             log.warning("🔌 Máy ảnh không phản hồi qua USB. Kích hoạt Hard Power Cycle qua GPIO 16...")
                             self.power_manager.hard_cycle_power()
@@ -181,6 +179,7 @@ class HybridCameraBackend:
         return applied, capabilities, mismatches
 
     def capture(self, camera_code="CAM-CM4"):
+        """Chụp ảnh từ máy ảnh thật (USB gphoto2) với cơ chế fallback trigger_capture cho Nikon/Canon/Sony."""
         if GPHOTO2_AVAILABLE and not self.use_real_hardware:
             self._try_init_real_camera()
 
@@ -188,26 +187,53 @@ class HybridCameraBackend:
             with self._lock:
                 try:
                     log.info("📸 [REAL CAMERA] Phát lệnh màn trập chụp ảnh...")
-                    
+
+                    # 1. Tắt viewfinder (live view) trước khi chụp nếu đang bật
                     try:
                         config = self._camera.get_config()
                         vf = config.get_child_by_name("viewfinder")
                         if int(vf.get_value()) != 0:
                             vf.set_value(0)
                             self._camera.set_config(config)
-                            time.sleep(0.4)
+                            time.sleep(0.5)
                     except Exception:
                         pass
 
-                    first_path = self._camera.capture(gp.GP_CAPTURE_IMAGE)
-                    paths = {(first_path.folder, first_path.name): first_path}
+                    # 2. Xóa các event tồn đọng
+                    try:
+                        while True:
+                            ev_type, _ = self._camera.wait_for_event(100)
+                            if ev_type == gp.GP_EVENT_TIMEOUT:
+                                break
+                    except Exception:
+                        pass
 
-                    deadline = time.monotonic() + 5
+                    # 3. Thử chụp bằng capture(GP_CAPTURE_IMAGE)
+                    first_path = None
+                    try:
+                        first_path = self._camera.capture(gp.GP_CAPTURE_IMAGE)
+                    except Exception as e_cap:
+                        log.warning("Lỗi capture() (%s) — Thử trigger_capture()...", e_cap)
+                        try:
+                            self._camera.trigger_capture()
+                        except Exception as e_trig:
+                            log.error("Lỗi trigger_capture(): %s", e_trig)
+
+                    paths = {}
+                    if first_path:
+                        paths[(first_path.folder, first_path.name)] = first_path
+
+                    # 4. Chờ file mới được ghi vào thẻ nhớ/RAM máy ảnh
+                    deadline = time.monotonic() + 6
                     while time.monotonic() < deadline:
-                        event_type, event_data = self._camera.wait_for_event(400)
-                        if event_type == gp.GP_EVENT_FILE_ADDED:
-                            paths[(event_data.folder, event_data.name)] = event_data
-                        elif event_type == gp.GP_EVENT_CAPTURE_COMPLETE:
+                        try:
+                            event_type, event_data = self._camera.wait_for_event(400)
+                            if event_type == gp.GP_EVENT_FILE_ADDED:
+                                paths[(event_data.folder, event_data.name)] = event_data
+                            elif event_type == gp.GP_EVENT_CAPTURE_COMPLETE:
+                                if paths:
+                                    break
+                        except Exception:
                             break
 
                     files = []
@@ -215,23 +241,26 @@ class HybridCameraBackend:
                         ext = path.name.lower().split('.')[-1]
                         if ext in ("thm", "tif", "tiff") and len(paths) > 1:
                             continue
-                        
-                        camera_file = self._camera.file_get(path.folder, path.name, gp.GP_FILE_TYPE_NORMAL)
-                        data = bytes(camera_file.get_data_and_size())
-
-                        preview_data = None
-                        try:
-                            preview_file = self._camera.file_get(path.folder, path.name, gp.GP_FILE_TYPE_PREVIEW)
-                            preview_data = bytes(preview_file.get_data_and_size())
-                        except Exception:
-                            pass
 
                         try:
-                            self._camera.file_delete(path.folder, path.name)
-                        except Exception:
-                            pass
+                            camera_file = self._camera.file_get(path.folder, path.name, gp.GP_FILE_TYPE_NORMAL)
+                            data = bytes(camera_file.get_data_and_size())
 
-                        files.append((path.name, data, preview_data))
+                            preview_data = None
+                            try:
+                                preview_file = self._camera.file_get(path.folder, path.name, gp.GP_FILE_TYPE_PREVIEW)
+                                preview_data = bytes(preview_file.get_data_and_size())
+                            except Exception:
+                                pass
+
+                            try:
+                                self._camera.file_delete(path.folder, path.name)
+                            except Exception:
+                                pass
+
+                            files.append((path.name, data, preview_data))
+                        except Exception as e_file:
+                            log.warning("Lỗi tải file %s: %s", path.name, e_file)
 
                     if files:
                         log.info("✅ [REAL CAMERA] Chụp ảnh thật thành công (%d file, %d bytes)", len(files), len(files[0][1]))

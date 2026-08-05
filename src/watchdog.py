@@ -81,6 +81,12 @@ class ThreadWatchdog:
         with self._lock:
             self._managed[managed.name] = managed
 
+    def touch(self, name: str):
+        """Cập nhật timestamp heartbeat cho thread `name`."""
+        with self._lock:
+            if name in self._managed:
+                self._managed[name].touch_heartbeat()
+
     def start(self, running_flag_fn: Callable[[], bool]):
         """Khởi động Watchdog daemon thread."""
         self._running = True
