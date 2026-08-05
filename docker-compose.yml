@@ -10,6 +10,11 @@ services:
     restart: unless-stopped
     privileged: true
     network_mode: "host"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
       - "/dev/gpiomem:/dev/gpiomem"
