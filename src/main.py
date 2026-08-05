@@ -505,7 +505,7 @@ class CameraAgent:
         ))
         self.watchdog.register(ManagedThread(
             name="cmd_worker", target_fn=self._fn_cmd_worker,
-            restart_on_crash=True, heartbeat_timeout=120
+            restart_on_crash=True, heartbeat_timeout=0   # lệnh capture/upload có thể mất 30-60s, không dùng heartbeat timeout
         ))
 
         self.watchdog.start(lambda: self.running)
