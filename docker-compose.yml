@@ -39,3 +39,13 @@ services:
       - TELEMETRY_INTERVAL=${TELEMETRY_INTERVAL:-30}
       - OFFLINE_QUEUE_DIR=${OFFLINE_QUEUE_DIR:-/app/offline_queue}
       - OFFLINE_RETRY_INTERVAL=${OFFLINE_RETRY_INTERVAL:-60}
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data/portainer_data:/data
