@@ -49,7 +49,12 @@ class HybridCameraBackend:
         }
 
     def _try_init_real_camera(self):
-        """Kết nối máy ảnh thật qua USB gphoto2 với cơ chế USB Reset & Power Cycle khi lỗi."""
+        """
+        Kết nối máy ảnh thật qua USB gphoto2.
+        Phân biệt 2 loại lỗi:
+          - [-105] Unknown model: Máy ảnh đang boot, USB đã detect nhưng chưa xong → CHỜ THÊM (không reset USB)
+          - [-60] I/O error / [-52] Not found: Lỗi USB thật → Reset USB ioctl → Hard Power Cycle
+        """
         with self._lock:
             if self._camera is not None:
                 return True
@@ -58,7 +63,10 @@ class HybridCameraBackend:
                 self.use_real_hardware = False
                 return False
 
-            for attempt in range(1, MAX_CAMERA_RETRIES + 1):
+            # Với lỗi -105, tối đa thử lại 6 lần (mỗi lần cách 2s = 12s tổng)
+            max_attempts = max(MAX_CAMERA_RETRIES, 6)
+
+            for attempt in range(1, max_attempts + 1):
                 try:
                     cam = gp.Camera()
                     cam.init()
@@ -78,21 +86,45 @@ class HybridCameraBackend:
 
                     summary = cam.get_summary()
                     first_line = str(summary).split('\n')[0] if summary else "gphoto2 USB Device"
-                    log.info("📷 [USB SUCCESS] Kết nối MÁY ẢNH THẬT thành công! (%s)", first_line)
+                    log.info("📷 [USB SUCCESS] Kết nối MÁY ẢNH THẬT thành công sau %d lần thử! (%s)",
+                             attempt, first_line)
                     return True
+
                 except Exception as e:
-                    log.warning("⚠️ Lỗi khởi tạo gphoto2 (Lần thử %d/%d): %s", attempt, MAX_CAMERA_RETRIES, e)
+                    err_str = str(e)
                     self._camera = None
                     self.use_real_hardware = False
 
-                    if attempt < MAX_CAMERA_RETRIES:
-                        log.info("🛠️ Reset cổng USB phần cứng bằng ioctl để sửa lỗi lock device...")
-                        reset_all_camera_usb_devices()
+                    # Phân biệt loại lỗi để xử lý đúng
+                    is_timing_error = "[-105]" in err_str or "Unknown model" in err_str
+                    is_io_error = any(x in err_str for x in ["[-7]", "[-60]", "[-52]", "I/O", "not found", "Not found"])
+
+                    if is_timing_error:
+                        # Máy ảnh đang boot, USB detect rồi nhưng chưa enum xong — CHỜ THÊM
+                        log.info("⏳ [CAMERA BOOT] Máy ảnh đang khởi động (lần %d/%d), chờ thêm 2s...",
+                                 attempt, max_attempts)
+                        time.sleep(2.0)
+
+                    elif is_io_error:
+                        # Lỗi USB thật (device bị lock/treo) → reset USB
+                        log.warning("⚠️ [USB ERROR] Lỗi cổng USB (lần %d/%d): %s — Reset USB...",
+                                    attempt, MAX_CAMERA_RETRIES, e)
+                        if attempt < MAX_CAMERA_RETRIES:
+                            reset_all_camera_usb_devices()
+                            time.sleep(1.5)
+                        if attempt == MAX_CAMERA_RETRIES:
+                            log.warning("🔌 USB kẹt nặng → Hard Power Cycle GPIO 16...")
+                            self.power_manager.hard_cycle_power()
+                            time.sleep(2.0)
+
+                    else:
+                        # Lỗi khác không xác định
+                        log.warning("⚠️ Lỗi khởi tạo gphoto2 (lần %d/%d): %s",
+                                    attempt, max_attempts, e)
                         time.sleep(1.5)
 
-                        if attempt == MAX_CAMERA_RETRIES - 1:
-                            log.warning("🔌 Máy ảnh không phản hồi qua USB. Kích hoạt Hard Power Cycle qua GPIO 16...")
-                            self.power_manager.hard_cycle_power()
+                    if attempt >= max_attempts:
+                        break
 
             log.info("ℹ️ Không thể kết nối máy ảnh USB gphoto2 — Tự động chuyển sang Chế độ Giả Lập Ảnh (PIL).")
             return False

@@ -227,6 +227,9 @@ class CameraAgent:
 
         if not self.live_session_id and not self.always_keep_power:
             if self.capture_interval_sec == 0 or self.capture_interval_sec > 15:
+                # Ngắt kết nối USB gphoto2 trước khi tắt nguồn rơ-le
+                # để tránh gphoto2 giữ lock device, gây lỗi [-52][-7] ở lần chụp tiếp theo
+                self.backend.disconnect_real_camera()
                 self.power_manager.power_off()
 
         return media_ids
