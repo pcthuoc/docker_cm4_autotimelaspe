@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Test Script: Đọc trực tiếp SIM 4G, Nhà mạng, ICCID, Số ĐT & Cường độ sóng từ modem Quectel.
-Không phụ thuộc thư viện bên ngoài, chạy trực tiếp trên CM4:
-    python3 test_sim.py
+In chi tiết chuỗi RAW phản hồi từ modem AT Commands.
+Chạy trực tiếp trên CM4: python3 test_sim.py
 """
 
 import os
@@ -15,14 +15,6 @@ import subprocess
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("test_sim")
-
-
-def run_cmd(cmd, timeout=3):
-    try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout, errors="ignore")
-        return res.stdout.strip()
-    except Exception:
-        return ""
 
 
 def send_at_command(device_path, cmd, timeout=1.2):
@@ -46,11 +38,9 @@ def send_at_command(device_path, cmd, timeout=1.2):
             except OSError:
                 pass
 
-            # Gửi lệnh AT
             full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
             os.write(fd, full_cmd)
 
-            # Đọc phản hồi
             resp = bytearray()
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
@@ -86,11 +76,23 @@ def get_full_sim_info():
 
     log.info(f"🔌 Đang đọc cổng Serial Modem: {target_dev}...")
 
-    # Gửi 4 lệnh AT chính
-    ops_resp    = send_at_command(target_dev, "AT+COPS?")
+    # Gửi 4 lệnh AT chính & in RAW Phản Hồi
+    print("\n----------------------------------------------------------")
+    print("📡 CHUỖI RAW PHẢN HỒI TỪ MODEM (AT COMMAND RESPONSES):")
+
+    ops_resp = send_at_command(target_dev, "AT+COPS?")
+    print(f"\n[1] Lệnh: AT+COPS?\nPhản hồi:\n{ops_resp.strip()}")
+
     signal_resp = send_at_command(target_dev, "AT+CSQ")
-    iccid_resp  = send_at_command(target_dev, "AT+QCCID") or send_at_command(target_dev, "AT+CCID")
-    cnum_resp   = send_at_command(target_dev, "AT+CNUM")
+    print(f"\n[2] Lệnh: AT+CSQ\nPhản hồi:\n{signal_resp.strip()}")
+
+    iccid_resp = send_at_command(target_dev, "AT+QCCID") or send_at_command(target_dev, "AT+CCID")
+    print(f"\n[3] Lệnh: AT+QCCID\nPhản hồi:\n{iccid_resp.strip()}")
+
+    cnum_resp = send_at_command(target_dev, "AT+CNUM")
+    print(f"\n[4] Lệnh: AT+CNUM\nPhản hồi:\n{cnum_resp.strip()}")
+
+    print("----------------------------------------------------------")
 
     # 1. Tên nhà mạng (Viettel / Vinaphone / Mobifone)
     operator = ""
