@@ -97,6 +97,56 @@ class HybridCameraBackend:
             log.info("ℹ️ Không thể kết nối máy ảnh USB gphoto2 — Tự động chuyển sang Chế độ Giả Lập Ảnh (PIL).")
             return False
 
+    def _wait_until_camera_ready(self, timeout=15.0, poll_interval=0.8) -> bool:
+        """
+        Poll liên tục kiểm tra máy ảnh đã thực sự sẵn sàng chụp chưa:
+        - Đọc được config (máy ảnh nhận tín hiệu)
+        - Đọc được storage/battery (thẻ nhớ đã mount xong)
+        Trả về True nếu sẵn sàng, False nếu timeout.
+        """
+        if not GPHOTO2_AVAILABLE or self._camera is None:
+            return False
+
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                # Kiểm tra 1: Đọc được config cơ bản (máy ảnh phản hồi USB)
+                config = self._camera.get_config()
+
+                # Kiểm tra 2: Đọc được battery level - chắc chắn máy ảnh đã boot xong
+                try:
+                    battery = config.get_child_by_name("batterylevel")
+                    bat_val = battery.get_value()
+                    log.info("✅ [CAMERA READY] Máy ảnh sẵn sàng sau %.1fs (poll lần %d) | Battery: %s",
+                             timeout - (deadline - time.monotonic()), attempt, bat_val)
+                except Exception:
+                    log.info("✅ [CAMERA READY] Máy ảnh sẵn sàng sau %.1fs (poll lần %d)",
+                             timeout - (deadline - time.monotonic()), attempt)
+
+                # Kiểm tra 3: Đảm bảo capture target là Memory Card nếu có thể
+                try:
+                    ct = config.get_child_by_name("capturetarget")
+                    current_target = str(ct.get_value()).lower()
+                    if "internal" in current_target or "ram" in current_target:
+                        # Nếu target đang là RAM/Internal, chờ thêm để thẻ nhớ mount
+                        log.info("⏳ [CAMERA READY] Thẻ nhớ chưa mount xong, đang chờ... (target=%s)", ct.get_value())
+                        time.sleep(poll_interval)
+                        continue
+                except Exception:
+                    pass
+
+                return True
+
+            except Exception as e:
+                log.debug("⏳ [CAMERA POLL %d] Chưa sẵn sàng: %s", attempt, e)
+                time.sleep(poll_interval)
+
+        log.warning("⚠️ [CAMERA READY] Máy ảnh KHÔNG sẵn sàng sau %.1fs timeout!", timeout)
+        return False
+
+
     def disconnect_real_camera(self):
         with self._lock:
             if self._camera is not None:
@@ -186,6 +236,13 @@ class HybridCameraBackend:
         if self.use_real_hardware:
             with self._lock:
                 try:
+                    # ✅ BƯỚC 0: Kiểm tra máy ảnh thực sự sẵn sàng trước khi bấm màn trập
+                    if not self._wait_until_camera_ready(timeout=15.0):
+                        log.warning("⚠️ Máy ảnh chưa sẵn sàng sau 15s — Chuyển sang giả lập.")
+                        self.disconnect_real_camera()
+                        # Rơi xuống simulated bên dưới
+                        raise RuntimeError("Camera not ready")
+
                     log.info("📸 [REAL CAMERA] Phát lệnh màn trập chụp ảnh...")
 
                     # 1. Tắt viewfinder (live view) trước khi chụp nếu đang bật
