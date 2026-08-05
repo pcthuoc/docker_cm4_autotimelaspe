@@ -265,37 +265,44 @@ def _get_sim_info_at_commands() -> dict | None:
     if not target_dev:
         return None
 
-    def send_at(cmd: str, timeout=1.0) -> str:
-        """Mở cổng serial non-blocking và gửi/đọc AT command bằng Python thuần."""
+    def send_at(cmd: str, timeout=1.2) -> str:
+        """Mở cổng serial 115200 baud non-blocking và gửi/đọc AT command."""
         if not os.path.exists(target_dev):
             return ""
+
+        subprocess.run(f"stty -F {target_dev} 115200 raw -echo 2>/dev/null", shell=True)
+
         try:
-            fd = os.open(target_dev, os.O_RDWR | os.O_NONBLOCK)
+            import serial
+            with serial.Serial(target_dev, 115200, timeout=timeout) as ser:
+                ser.reset_input_buffer()
+                ser.write((cmd.strip() + "\r\n").encode('utf-8'))
+                time.sleep(0.3)
+                resp = ser.read(1024).decode('utf-8', errors='ignore')
+                return resp
+        except Exception:
+            pass
+
+        try:
+            fd = os.open(target_dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
             try:
-                try:
-                    import termios
-                    attr = termios.tcgetattr(fd)
-                    attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
-                    termios.tcsetattr(fd, termios.TCSANOW, attr)
-                except Exception:
-                    pass
+                import termios
+                attr = termios.tcgetattr(fd)
+                attr[4] = termios.B115200
+                attr[5] = termios.B115200
+                attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
+                termios.tcsetattr(fd, termios.TCSANOW, attr)
+                termios.tcflush(fd, termios.TCIOFLUSH)
 
-                # Flush any leftover bytes in buffer
-                try:
-                    os.read(fd, 1024)
-                except OSError:
-                    pass
-
-                # Gửi lệnh AT
                 full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
                 os.write(fd, full_cmd)
 
-                # Đọc phản hồi tới khi gặp OK hoặc ERROR
+                time.sleep(0.3)
                 resp = bytearray()
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     try:
-                        chunk = os.read(fd, 256)
+                        chunk = os.read(fd, 512)
                         if chunk:
                             resp.extend(chunk)
                             if b"OK" in resp or b"ERROR" in resp:

@@ -18,34 +18,46 @@ log = logging.getLogger("test_sim")
 
 
 def send_at_command(device_path, cmd, timeout=1.2):
-    """Mở cổng Serial và gửi lệnh AT bằng Python thuần (os.open / os.read / os.write)."""
+    """Mở cổng Serial 115200 baud và gửi lệnh AT (hỗ trợ pyserial + termios fallback)."""
     if not os.path.exists(device_path):
         return ""
-    try:
-        fd = os.open(device_path, os.O_RDWR | os.O_NONBLOCK)
-        try:
-            try:
-                import termios
-                attr = termios.tcgetattr(fd)
-                attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
-                termios.tcsetattr(fd, termios.TCSANOW, attr)
-            except Exception:
-                pass
 
-            # Flush buffer cũ
-            try:
-                os.read(fd, 1024)
-            except OSError:
-                pass
+    # Cấu hình baudrate 115200 cho port
+    subprocess.run(f"stty -F {device_path} 115200 raw -echo 2>/dev/null", shell=True)
+
+    # Ưu tiên 1: Dùng pyserial nếu có
+    try:
+        import serial
+        with serial.Serial(device_path, 115200, timeout=timeout) as ser:
+            ser.reset_input_buffer()
+            ser.write((cmd.strip() + "\r\n").encode('utf-8'))
+            time.sleep(0.3)
+            resp = ser.read(1024).decode('utf-8', errors='ignore')
+            return resp
+    except Exception:
+        pass
+
+    # Ưu tiên 2: Native termios với B115200 speed
+    try:
+        fd = os.open(device_path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        try:
+            import termios
+            attr = termios.tcgetattr(fd)
+            attr[4] = termios.B115200
+            attr[5] = termios.B115200
+            attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
+            termios.tcsetattr(fd, termios.TCSANOW, attr)
+            termios.tcflush(fd, termios.TCIOFLUSH)
 
             full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
             os.write(fd, full_cmd)
 
+            time.sleep(0.3)
             resp = bytearray()
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 try:
-                    chunk = os.read(fd, 256)
+                    chunk = os.read(fd, 512)
                     if chunk:
                         resp.extend(chunk)
                         if b"OK" in resp or b"ERROR" in resp:
@@ -76,7 +88,6 @@ def get_full_sim_info():
 
     log.info(f"🔌 Đang đọc cổng Serial Modem: {target_dev}...")
 
-    # Gửi 4 lệnh AT chính & in RAW Phản Hồi
     print("\n----------------------------------------------------------")
     print("📡 CHUỖI RAW PHẢN HỒI TỪ MODEM (AT COMMAND RESPONSES):")
 
