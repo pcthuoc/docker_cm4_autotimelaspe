@@ -250,7 +250,7 @@ def _get_sim_info_mmcli() -> dict | None:
 
 def _get_sim_info_at_commands() -> dict | None:
     """
-    Thử lấy thông tin mạng qua AT commands trực tiếp trên cổng Serial bằng Python thuần:
+    Thử lấy thông tin mạng qua AT commands trực tiếp trên cổng Serial bằng Single Session (mở port 1 lần duy nhất):
     - AT+QCCID -> ICCID (89840480009206559331)
     - AT+CNUM  -> Phone (+84982583212)
     - AT+CSQ   -> Signal (RSSI 0..31 -> dBm & %)
@@ -265,25 +265,17 @@ def _get_sim_info_at_commands() -> dict | None:
     if not target_dev:
         return None
 
-    def send_at(cmd: str, timeout=1.2) -> str:
-        """Mở cổng serial 115200 baud non-blocking và gửi/đọc AT command."""
-        if not os.path.exists(target_dev):
-            return ""
+    subprocess.run(f"stty -F {target_dev} 115200 raw -echo 2>/dev/null", shell=True)
 
-        subprocess.run(f"stty -F {target_dev} 115200 raw -echo 2>/dev/null", shell=True)
+    ser = None
+    fd = None
 
+    try:
         try:
             import serial
-            with serial.Serial(target_dev, 115200, timeout=timeout) as ser:
-                ser.reset_input_buffer()
-                ser.write((cmd.strip() + "\r\n").encode('utf-8'))
-                time.sleep(0.3)
-                resp = ser.read(1024).decode('utf-8', errors='ignore')
-                return resp
+            ser = serial.Serial(target_dev, 115200, timeout=1.5)
+            ser.reset_input_buffer()
         except Exception:
-            pass
-
-        try:
             fd = os.open(target_dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
             try:
                 import termios
@@ -293,10 +285,24 @@ def _get_sim_info_at_commands() -> dict | None:
                 attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
                 termios.tcsetattr(fd, termios.TCSANOW, attr)
                 termios.tcflush(fd, termios.TCIOFLUSH)
+            except Exception:
+                pass
+    except Exception:
+        return None
 
-                full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
+    def send_at_session(cmd_str: str, timeout=1.5) -> str:
+        full_cmd = (cmd_str.strip() + "\r\n").encode("utf-8")
+        if ser:
+            try:
+                ser.write(full_cmd)
+                time.sleep(0.3)
+                resp = ser.read(1024).decode('utf-8', errors='ignore')
+                return resp
+            except Exception:
+                return ""
+        elif fd is not None:
+            try:
                 os.write(fd, full_cmd)
-
                 time.sleep(0.3)
                 resp = bytearray()
                 deadline = time.monotonic() + timeout
@@ -310,21 +316,17 @@ def _get_sim_info_at_commands() -> dict | None:
                     except OSError:
                         pass
                     time.sleep(0.05)
-
-                return resp.decode("utf-8", errors="ignore")
-            finally:
-                os.close(fd)
-        except Exception:
-            return ""
+                return resp.decode('utf-8', errors='ignore')
+            except Exception:
+                return ""
+        return ""
 
     try:
-        # Lấy phản hồi từ 4 lệnh AT chính
-        ops_resp    = send_at("AT+COPS?")
-        signal_resp = send_at("AT+CSQ")
-        iccid_resp  = send_at("AT+QCCID") or send_at("AT+CCID") or send_at("AT+CICCID")
-        cnum_resp   = send_at("AT+CNUM")
+        ops_resp    = send_at_session("AT+COPS?")
+        signal_resp = send_at_session("AT+CSQ")
+        iccid_resp  = send_at_session("AT+QCCID") or send_at_session("AT+CCID")
+        cnum_resp   = send_at_session("AT+CNUM")
 
-        # 1. Nhà mạng (+COPS: 0,0,"Viettel Viettel",7)
         operator = ""
         m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
         if m:
@@ -335,7 +337,6 @@ def _get_sim_info_at_commands() -> dict | None:
             else:
                 operator = raw_ops
 
-        # 2. Cường độ sóng (+CSQ: 29,99) -> lấy số 29 đầu tiên
         signal_dbm = -99
         signal_percent = 0
         m = re.search(r'\+CSQ:\s*(\d+)\s*,\s*(\d+)', signal_resp)
@@ -345,13 +346,11 @@ def _get_sim_info_at_commands() -> dict | None:
                 signal_dbm = -113 + csq * 2
                 signal_percent = int((csq / 31.0) * 100)
 
-        # 3. Mã Seri ICCID SIM (+QCCID: 89840480009206559331)
         iccid = ""
         m_iccid = re.search(r'(?:[\+\w]+:)?\s*(\d{18,22})', iccid_resp)
         if m_iccid:
             iccid = m_iccid.group(1)
 
-        # 4. Số điện thoại (+CNUM: ,"+84982583212",145)
         number = ""
         m_num = re.search(r'\+CNUM:\s*[^,]*,\s*"([^"]+)"', cnum_resp)
         if m_num:

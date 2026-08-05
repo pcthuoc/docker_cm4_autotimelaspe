@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Test Script: Đọc trực tiếp SIM 4G, Nhà mạng, ICCID, Số ĐT & Cường độ sóng từ modem Quectel.
-In chi tiết chuỗi RAW phản hồi từ modem AT Commands.
-Chạy trực tiếp trên CM4: python3 test_sim.py
+Giữ cổng Serial MỞ 1 LẦN DUY NHẤT (giống hệt Minicom) để tránh toggle DTR/RTS reset modem.
+Chạy trực tiếp trên CM4: python3 test_sim.py hoặc sudo python3 test_sim.py
 """
 
 import os
@@ -17,65 +17,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("test_sim")
 
 
-def send_at_command(device_path, cmd, timeout=1.2):
-    """Mở cổng Serial 115200 baud và gửi lệnh AT (hỗ trợ pyserial + termios fallback)."""
-    if not os.path.exists(device_path):
-        return ""
-
-    # Cấu hình baudrate 115200 cho port
-    subprocess.run(f"stty -F {device_path} 115200 raw -echo 2>/dev/null", shell=True)
-
-    # Ưu tiên 1: Dùng pyserial nếu có
-    try:
-        import serial
-        with serial.Serial(device_path, 115200, timeout=timeout) as ser:
-            ser.reset_input_buffer()
-            ser.write((cmd.strip() + "\r\n").encode('utf-8'))
-            time.sleep(0.3)
-            resp = ser.read(1024).decode('utf-8', errors='ignore')
-            return resp
-    except Exception:
-        pass
-
-    # Ưu tiên 2: Native termios với B115200 speed
-    try:
-        fd = os.open(device_path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-        try:
-            import termios
-            attr = termios.tcgetattr(fd)
-            attr[4] = termios.B115200
-            attr[5] = termios.B115200
-            attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
-            termios.tcsetattr(fd, termios.TCSANOW, attr)
-            termios.tcflush(fd, termios.TCIOFLUSH)
-
-            full_cmd = (cmd.strip() + "\r\n").encode("utf-8")
-            os.write(fd, full_cmd)
-
-            time.sleep(0.3)
-            resp = bytearray()
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                try:
-                    chunk = os.read(fd, 512)
-                    if chunk:
-                        resp.extend(chunk)
-                        if b"OK" in resp or b"ERROR" in resp:
-                            break
-                except OSError:
-                    pass
-                time.sleep(0.05)
-
-            return resp.decode("utf-8", errors="ignore")
-        finally:
-            os.close(fd)
-    except Exception as e:
-        log.debug("Lỗi gửi AT %s: %s", device_path, e)
-        return ""
-
-
 def get_full_sim_info():
-    """Tự động tìm cổng Modem 4G Quectel và đọc đầy đủ thông số SIM."""
+    """Tự động tìm cổng Modem 4G Quectel và đọc đầy đủ thông số SIM trong 1 Session duy nhất."""
     target_dev = None
     for dev in ("/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
         if os.path.exists(dev):
@@ -86,69 +29,149 @@ def get_full_sim_info():
         log.error("❌ Không tìm thấy cổng Modem USB (/dev/ttyUSB* hoặc /dev/ttyACM*)")
         return None
 
-    log.info(f"🔌 Đang đọc cổng Serial Modem: {target_dev}...")
+    # Kiểm tra quyền truy cập file thiết bị
+    if not os.access(target_dev, os.R_OK | os.W_OK):
+        log.warning("⚠️ Cảnh báo: User hiện tại không có quyền đọc/ghi %s. Nếu lỗi hãy thử: sudo python3 test_sim.py", target_dev)
 
-    print("\n----------------------------------------------------------")
-    print("📡 CHUỖI RAW PHẢN HỒI TỪ MODEM (AT COMMAND RESPONSES):")
+    log.info(f"🔌 Đang mở cổng Serial Modem (Session 1 lần): {target_dev}...")
 
-    ops_resp = send_at_command(target_dev, "AT+COPS?")
-    print(f"\n[1] Lệnh: AT+COPS?\nPhản hồi:\n{ops_resp.strip()}")
+    # Cấu hình baudrate 115200 bằng stty
+    subprocess.run(f"stty -F {target_dev} 115200 raw -echo 2>/dev/null", shell=True)
 
-    signal_resp = send_at_command(target_dev, "AT+CSQ")
-    print(f"\n[2] Lệnh: AT+CSQ\nPhản hồi:\n{signal_resp.strip()}")
+    ser = None
+    fd = None
 
-    iccid_resp = send_at_command(target_dev, "AT+QCCID") or send_at_command(target_dev, "AT+CCID")
-    print(f"\n[3] Lệnh: AT+QCCID\nPhản hồi:\n{iccid_resp.strip()}")
+    # Mở Serial Port 1 LẦN DUY NHẤT cho toàn bộ session (giống Minicom)
+    try:
+        try:
+            import serial
+            ser = serial.Serial(target_dev, 115200, timeout=2.0)
+            ser.reset_input_buffer()
+        except Exception as e_ser:
+            log.debug("Mở bằng pyserial thất bại (%s), chuyển sang os.open...", e_ser)
+            fd = os.open(target_dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            try:
+                import termios
+                attr = termios.tcgetattr(fd)
+                attr[4] = termios.B115200
+                attr[5] = termios.B115200
+                attr[3] &= ~(termios.ICANON | termios.ECHO | termios.ECHOE | termios.ISIG)
+                termios.tcsetattr(fd, termios.TCSANOW, attr)
+                termios.tcflush(fd, termios.TCIOFLUSH)
+            except Exception:
+                pass
+    except Exception as e_open:
+        log.error("❌ Không thể mở cổng %s (Lỗi phân quyền hoặc cổng bị chiếm): %s", target_dev, e_open)
+        log.info("👉 Hãy thử chạy lệnh: sudo python3 test_sim.py")
+        return None
 
-    cnum_resp = send_at_command(target_dev, "AT+CNUM")
-    print(f"\n[4] Lệnh: AT+CNUM\nPhản hồi:\n{cnum_resp.strip()}")
+    def send_at_session(cmd_str: str, timeout=2.0) -> str:
+        """Gửi lệnh AT trên Serial Session đang mở."""
+        full_cmd = (cmd_str.strip() + "\r\n").encode("utf-8")
+        if ser:
+            try:
+                ser.write(full_cmd)
+                time.sleep(0.4)
+                resp = ser.read(1024).decode('utf-8', errors='ignore')
+                return resp
+            except Exception:
+                return ""
+        elif fd is not None:
+            try:
+                os.write(fd, full_cmd)
+                time.sleep(0.4)
+                resp = bytearray()
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    try:
+                        chunk = os.read(fd, 512)
+                        if chunk:
+                            resp.extend(chunk)
+                            if b"OK" in resp or b"ERROR" in resp:
+                                break
+                    except OSError:
+                        pass
+                    time.sleep(0.05)
+                return resp.decode('utf-8', errors='ignore')
+            except Exception:
+                return ""
+        return ""
 
-    print("----------------------------------------------------------")
+    try:
+        print("\n----------------------------------------------------------")
+        print("📡 CHUỖI RAW PHẢN HỒI TỪ MODEM (AT COMMAND RESPONSES):")
 
-    # 1. Tên nhà mạng (Viettel / Vinaphone / Mobifone)
-    operator = ""
-    m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
-    if m:
-        raw_ops = m.group(1).strip()
-        words = raw_ops.split()
-        if len(words) == 2 and words[0] == words[1]:
-            operator = words[0]
-        else:
-            operator = raw_ops
+        ops_resp = send_at_session("AT+COPS?")
+        print(f"\n[1] Lệnh: AT+COPS?\nPhản hồi:\n{ops_resp.strip()}")
 
-    # 2. Cường độ sóng (RSSI CSQ 0..31 -> dBm & %)
-    signal_dbm = -99
-    signal_percent = 0
-    m = re.search(r'\+CSQ:\s*(\d+)\s*,\s*(\d+)', signal_resp)
-    if m:
-        csq = int(m.group(1))
-        if 0 <= csq <= 31:
-            signal_dbm = -113 + csq * 2
-            signal_percent = int((csq / 31.0) * 100)
+        signal_resp = send_at_session("AT+CSQ")
+        print(f"\n[2] Lệnh: AT+CSQ\nPhản hồi:\n{signal_resp.strip()}")
 
-    # 3. Mã Seri ICCID SIM (20 chữ số: 8984...)
-    iccid = ""
-    m_iccid = re.search(r'(?:[\+\w]+:)?\s*(\d{18,22})', iccid_resp)
-    if m_iccid:
-        iccid = m_iccid.group(1)
+        iccid_resp = send_at_session("AT+QCCID") or send_at_session("AT+CCID")
+        print(f"\n[3] Lệnh: AT+QCCID\nPhản hồi:\n{iccid_resp.strip()}")
 
-    # 4. Số điện thoại SIM (+84982583212)
-    number = ""
-    m_num = re.search(r'\+CNUM:\s*[^,]*,\s*"([^"]+)"', cnum_resp)
-    if m_num:
-        number = m_num.group(1)
+        cnum_resp = send_at_session("AT+CNUM")
+        print(f"\n[4] Lệnh: AT+CNUM\nPhản hồi:\n{cnum_resp.strip()}")
 
-    return {
-        "source": f"at_command ({target_dev})",
-        "operator": operator or "Viettel",
-        "number": number or "N/A",
-        "iccid": iccid or "Unknown",
-        "signal_percent": signal_percent,
-        "signal_dbm": signal_dbm,
-        "technology": "LTE/4G",
-        "state": "connected" if signal_dbm > -100 else "searching",
-        "online": signal_dbm > -100,
-    }
+        print("----------------------------------------------------------")
+
+        # 1. Tên nhà mạng (Viettel / Vinaphone / Mobifone)
+        operator = ""
+        m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
+        if m:
+            raw_ops = m.group(1).strip()
+            words = raw_ops.split()
+            if len(words) == 2 and words[0] == words[1]:
+                operator = words[0]
+            else:
+                operator = raw_ops
+
+        # 2. Cường độ sóng (RSSI CSQ 0..31 -> dBm & %)
+        signal_dbm = -99
+        signal_percent = 0
+        m = re.search(r'\+CSQ:\s*(\d+)\s*,\s*(\d+)', signal_resp)
+        if m:
+            csq = int(m.group(1))
+            if 0 <= csq <= 31:
+                signal_dbm = -113 + csq * 2
+                signal_percent = int((csq / 31.0) * 100)
+
+        # 3. Mã Seri ICCID SIM (20 chữ số: 8984...)
+        iccid = ""
+        m_iccid = re.search(r'(?:[\+\w]+:)?\s*(\d{18,22})', iccid_resp)
+        if m_iccid:
+            iccid = m_iccid.group(1)
+
+        # 4. Số điện thoại SIM (+84982583212)
+        number = ""
+        m_num = re.search(r'\+CNUM:\s*[^,]*,\s*"([^"]+)"', cnum_resp)
+        if m_num:
+            number = m_num.group(1)
+
+        return {
+            "source": f"at_command ({target_dev})",
+            "operator": operator or "Viettel",
+            "number": number or "N/A",
+            "iccid": iccid or "Unknown",
+            "signal_percent": signal_percent,
+            "signal_dbm": signal_dbm,
+            "technology": "LTE/4G",
+            "state": "connected" if signal_dbm > -100 else "searching",
+            "online": signal_dbm > -100,
+        }
+
+    finally:
+        # Đóng session duy nhất
+        if ser:
+            try:
+                ser.close()
+            except Exception:
+                pass
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
