@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: docker_cm4_autotimelapse:latest
+    image: pcthuoc/cm4_autotimelapse:latest
     container_name: cm4_camera_agent
     restart: unless-stopped
     privileged: true
