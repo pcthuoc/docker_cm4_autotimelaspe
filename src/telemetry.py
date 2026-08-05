@@ -466,7 +466,7 @@ def get_sim_info(force=False) -> dict:
 def read_sht20_sensor(bus_id: int = 10, address: int = 0x40) -> tuple:
     """
     Đọc nhiệt độ (°C) và độ ẩm (%RH) từ cảm biến SHT20 ở địa chỉ 0x40 trên bus I2C 10.
-    Sử dụng phương pháp đọc trực tiếp 3 byte (MSB, LSB, CRC) đã kiểm thử thực tế.
+    Sử dụng raw I2C transaction (i2c_msg) tránh lỗi protocol SMBus block data.
     Trả về (temp_c, humidity_percent) hoặc (None, None) nếu không kết nối/lỗi.
     """
     try:
@@ -482,25 +482,27 @@ def read_sht20_sensor(bus_id: int = 10, address: int = 0x40) -> tuple:
         import time
         with smbus2.SMBus(bus_id) as bus:
             # 1. Đo Nhiệt độ (Lệnh 0xF3)
-            bus.write_byte(address, 0xF3)
+            write_t = smbus2.i2c_msg.write(address, [0xF3])
+            bus.i2c_rdwr(write_t)
             time.sleep(0.1)  # Chờ 100ms cho cảm biến đo xong
 
-            msb = bus.read_byte(address)
-            lsb = bus.read_byte(address)
-            _crc = bus.read_byte(address)
+            read_t = smbus2.i2c_msg.read(address, 3)
+            bus.i2c_rdwr(read_t)
+            data_t = list(read_t)
 
-            raw_temp = (msb << 8) | lsb
+            raw_temp = (data_t[0] << 8) | data_t[1]
             temp_c = round(-46.85 + 175.72 * (raw_temp / 65536.0), 1)
 
             # 2. Đo Độ ẩm (Lệnh 0xF5)
-            bus.write_byte(address, 0xF5)
+            write_h = smbus2.i2c_msg.write(address, [0xF5])
+            bus.i2c_rdwr(write_h)
             time.sleep(0.05)
 
-            msb_h = bus.read_byte(address)
-            lsb_h = bus.read_byte(address)
-            _crc_h = bus.read_byte(address)
+            read_h = smbus2.i2c_msg.read(address, 3)
+            bus.i2c_rdwr(read_h)
+            data_h = list(read_h)
 
-            raw_hum = (msb_h << 8) | lsb_h
+            raw_hum = (data_h[0] << 8) | data_h[1]
             humi = round(-6.0 + 125.0 * (raw_hum / 65536.0), 1)
             humi = max(0.0, min(100.0, humi))
 
@@ -534,10 +536,15 @@ def read_ads1115_voltages(bus_id: int = 10, address: int = 0x49) -> dict:
             mux = (0x4 + channel) << 12
             # OS=1, MUX=100/101, PGA=001 (+/-4.096V), MODE=1 (Single-shot), DR=100 (128SPS), COMP=0003
             config = 0x8000 | mux | 0x0200 | 0x0100 | 0x0083
-            config_bytes = [(config >> 8) & 0xFF, config & 0xFF]
-            bus.write_i2c_block_data(address, 0x01, config_bytes)
-            time.sleep(0.015)
-            data = bus.read_i2c_block_data(address, 0x00, 2)
+            write_cfg = smbus2.i2c_msg.write(address, [0x01, (config >> 8) & 0xFF, config & 0xFF])
+            bus.i2c_rdwr(write_cfg)
+            time.sleep(0.02)
+
+            write_ptr = smbus2.i2c_msg.write(address, [0x00])
+            read_val = smbus2.i2c_msg.read(address, 2)
+            bus.i2c_rdwr(write_ptr, read_val)
+            data = list(read_val)
+
             raw = (data[0] << 8) | data[1]
             if raw > 32767:
                 raw -= 65536
