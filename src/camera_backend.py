@@ -191,6 +191,15 @@ class HybridCameraBackend:
                 self.use_real_hardware = False
                 log.info("🔌 Đã đóng kết nối máy ảnh USB gphoto2.")
 
+                # Force reset USB bus để Linux kernel quét lại thiết bị
+                # sau khi rơ-le tắt/bật nguồn, tránh lỗi [-105] Unknown model
+                try:
+                    time.sleep(0.5)
+                    reset_all_camera_usb_devices()
+                    log.info("🔄 USB reset sau disconnect — sẵn sàng cho lần bật nguồn tiếp theo.")
+                except Exception as e:
+                    log.debug("USB reset không cần thiết: %s", e)
+
     def get_settings(self):
         if GPHOTO2_AVAILABLE and not self.use_real_hardware:
             self._try_init_real_camera()
