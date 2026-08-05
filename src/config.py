@@ -10,14 +10,14 @@ import os
 # Cấu hình Camera & MQTT Server
 CAMERA_CODE        = os.getenv("CAMERA_CODE", "CAM-4YZ8X6")
 MQTT_PASSWORD      = os.getenv("MQTT_PASSWORD", os.getenv("DEVICE_SECRET", "o2hs_IojnvqSXlF1b9M-sg"))
-MQTT_BROKER        = os.getenv("MQTT_BROKER", "cloud.congnghetimelapse.com")
-MQTT_PORT          = int(os.getenv("MQTT_PORT", "1884"))
-SERVER_BASE        = os.getenv("SERVER_BASE", "http://cloud.congnghetimelapse.com")
+MQTT_BROKER        = os.getenv("MQTT_BROKER", "mqtt.congnghetimelapse.com")
+MQTT_PORT          = int(os.getenv("MQTT_PORT", "1883"))
+SERVER_BASE        = os.getenv("SERVER_BASE", "https://cloud.congnghetimelapse.com")
 
 # Cấu hình Quản lý Nguồn GPIO trên CM4
 POWER_GPIO_PIN     = int(os.getenv("POWER_GPIO_PIN", "16"))
 POWER_ACTIVE_HIGH  = os.getenv("POWER_ACTIVE_HIGH", "true").lower() in ("true", "1", "yes")
-WARMUP_DELAY_SEC   = float(os.getenv("WARMUP_DELAY_SEC", "3.0"))
+WARMUP_DELAY_SEC   = float(os.getenv("WARMUP_DELAY_SEC", "5.0"))
 ALWAYS_KEEP_POWER  = os.getenv("ALWAYS_KEEP_POWER", "false").lower() in ("true", "1", "yes")
 
 # Cấu hình Số lần Thử lại (Retry Rules)
