@@ -2,7 +2,8 @@ FROM python:3.11-slim-bookworm
 
 # Thiết lập biến môi trường
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
 
 # Cài đặt các gói hệ thống cần thiết cho gphoto2, USB và GPIO trên Raspberry Pi CM4
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,8 +27,9 @@ RUN mkdir -p /app/offline_queue
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ mã nguồn các module Python
-COPY *.py /app/
+# Copy tất cả các file mã nguồn từ thư mục src
+COPY src/ /app/src/
+COPY src/ /app/
 
 # Lệnh chạy chính khởi chạy Orchestrator main.py
-CMD ["python3", "-u", "main.py"]
+CMD ["python3", "-u", "/app/src/main.py"]
