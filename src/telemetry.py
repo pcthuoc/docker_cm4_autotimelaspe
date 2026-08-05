@@ -294,16 +294,19 @@ def _get_sim_info_at_commands() -> dict | None:
         full_cmd = (cmd_str.strip() + "\r\n").encode("utf-8")
         if ser:
             try:
+                ser.reset_input_buffer()
                 ser.write(full_cmd)
-                time.sleep(0.3)
-                resp = ser.read(1024).decode('utf-8', errors='ignore')
-                return resp
+                time.sleep(0.1)
+                resp_bytes = ser.read_until(b"OK")
+                if not resp_bytes or b"OK" not in resp_bytes:
+                    resp_bytes += ser.read_until(b"ERROR")
+                return resp_bytes.decode('utf-8', errors='ignore')
             except Exception:
                 return ""
         elif fd is not None:
             try:
                 os.write(fd, full_cmd)
-                time.sleep(0.3)
+                time.sleep(0.1)
                 resp = bytearray()
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:

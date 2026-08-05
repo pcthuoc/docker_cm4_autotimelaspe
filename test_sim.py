@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Script: Đọc trực tiếp SIM 4G, Nhà mạng, ICCID, Số ĐT & Cường độ sóng từ modem Quectel.
-Giữ cổng Serial MỞ 1 LẦN DUY NHẤT (giống hệt Minicom) để tránh toggle DTR/RTS reset modem.
+Giữ cổng Serial MỞ 1 LẦN DUY NHẤT (giống hệt Minicom) và dùng read_until(b"OK") phản hồi siêu tốc.
 Chạy trực tiếp trên CM4: python3 test_sim.py hoặc sudo python3 test_sim.py
 """
 
@@ -29,23 +29,20 @@ def get_full_sim_info():
         log.error("❌ Không tìm thấy cổng Modem USB (/dev/ttyUSB* hoặc /dev/ttyACM*)")
         return None
 
-    # Kiểm tra quyền truy cập file thiết bị
     if not os.access(target_dev, os.R_OK | os.W_OK):
-        log.warning("⚠️ Cảnh báo: User hiện tại không có quyền đọc/ghi %s. Nếu lỗi hãy thử: sudo python3 test_sim.py", target_dev)
+        log.warning("⚠️ Cảnh báo phân quyền %s. Nếu lỗi hãy chạy bằng: sudo python3 test_sim.py", target_dev)
 
     log.info(f"🔌 Đang mở cổng Serial Modem (Session 1 lần): {target_dev}...")
 
-    # Cấu hình baudrate 115200 bằng stty
     subprocess.run(f"stty -F {target_dev} 115200 raw -echo 2>/dev/null", shell=True)
 
     ser = None
     fd = None
 
-    # Mở Serial Port 1 LẦN DUY NHẤT cho toàn bộ session (giống Minicom)
     try:
         try:
             import serial
-            ser = serial.Serial(target_dev, 115200, timeout=2.0)
+            ser = serial.Serial(target_dev, 115200, timeout=1.5)
             ser.reset_input_buffer()
         except Exception as e_ser:
             log.debug("Mở bằng pyserial thất bại (%s), chuyển sang os.open...", e_ser)
@@ -61,25 +58,30 @@ def get_full_sim_info():
             except Exception:
                 pass
     except Exception as e_open:
-        log.error("❌ Không thể mở cổng %s (Lỗi phân quyền hoặc cổng bị chiếm): %s", target_dev, e_open)
+        log.error("❌ Không thể mở cổng %s: %s", target_dev, e_open)
         log.info("👉 Hãy thử chạy lệnh: sudo python3 test_sim.py")
         return None
 
-    def send_at_session(cmd_str: str, timeout=2.0) -> str:
-        """Gửi lệnh AT trên Serial Session đang mở."""
+    def send_at_session(cmd_str: str, timeout=1.5) -> str:
+        """Gửi lệnh AT và dùng read_until(b'OK') đọc siêu tốc ngay khi modem phản hồi."""
         full_cmd = (cmd_str.strip() + "\r\n").encode("utf-8")
         if ser:
             try:
+                ser.reset_input_buffer()
                 ser.write(full_cmd)
-                time.sleep(0.4)
-                resp = ser.read(1024).decode('utf-8', errors='ignore')
-                return resp
-            except Exception:
+                time.sleep(0.1)
+                # Đọc tới khi thấy OK hoặc ERROR
+                resp_bytes = ser.read_until(b"OK")
+                if not resp_bytes or b"OK" not in resp_bytes:
+                    resp_bytes += ser.read_until(b"ERROR")
+                return resp_bytes.decode('utf-8', errors='ignore')
+            except Exception as e:
+                log.debug("Lỗi ser: %s", e)
                 return ""
         elif fd is not None:
             try:
                 os.write(fd, full_cmd)
-                time.sleep(0.4)
+                time.sleep(0.1)
                 resp = bytearray()
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
@@ -161,7 +163,6 @@ def get_full_sim_info():
         }
 
     finally:
-        # Đóng session duy nhất
         if ser:
             try:
                 ser.close()
