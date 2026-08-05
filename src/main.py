@@ -9,6 +9,7 @@ Luồng xử lý chính kết hợp:
   - Hàng đợi Upload Offline (3x retry → local disk → auto retry)
   - Telemetry thật (SIM/modem/WiFi, CPU temp, RAM, Network)
   - Watchdog giám sát & tự động khởi động lại mọi thread bị crash
+  - User-Agent header chuẩn cho HTTP requests bypass WAF/Cloudflare
 """
 
 import sys
@@ -52,6 +53,7 @@ logging.basicConfig(
 log = logging.getLogger("cm4_main_agent")
 
 FIRMWARE_VERSION = "cm4-autotimelapse-v2.0"
+USER_AGENT = "AutoTimelapse-CM4-Agent/2.0 (RaspberryPi CM4)"
 
 
 class CameraAgent:
@@ -90,6 +92,8 @@ class CameraAgent:
         self.t_data   = f"camera/{self.code}/data"
         self.t_status = f"camera/{self.code}/status"
 
+    # ── HTTP Helpers ──────────────────────────────────────────────────────────
+
     def _http_post_json(self, path, obj):
         body = json.dumps(obj).encode()
         req = urllib.request.Request(
@@ -98,6 +102,7 @@ class CameraAgent:
                 "Content-Type": "application/json",
                 "X-Device-Key": self.code,
                 "X-Device-Secret": self.password,
+                "User-Agent": USER_AGENT,
             },
         )
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -113,6 +118,7 @@ class CameraAgent:
                 "X-Device-Secret": self.password,
                 "X-Live-Session": session_id,
                 "X-Frame-Seq": str(seq),
+                "User-Agent": USER_AGENT,
             },
         )
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -120,11 +126,17 @@ class CameraAgent:
 
     def _http_put(self, url, data, content_type):
         req = urllib.request.Request(url, data=data, method="PUT",
-                                     headers={"Content-Type": content_type})
+                                     headers={
+                                         "Content-Type": content_type,
+                                         "User-Agent": USER_AGENT,
+                                     })
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status
 
+    # ── Upload ────────────────────────────────────────────────────────────────
+
     def _do_upload_to_server(self, final_bytes, thumb_bytes, metadata):
+        """Upload S3 Presigned URL workflow (Presign → PUT → Complete)."""
         try:
             content_type = metadata.get("content_type", "image/jpeg")
             taken_at = metadata.get("taken_at") or datetime.now(timezone.utc).isoformat()
@@ -163,6 +175,9 @@ class CameraAgent:
             return False, None
 
     def upload_capture(self):
+        """Thực hiện chu trình chụp đầy đủ:
+        GPIO ON → Capture → Retry 3x upload → Offline Queue → Power Management.
+        """
         self.power_manager.power_on()
 
         taken_at = datetime.now(timezone.utc).isoformat()
@@ -473,7 +488,6 @@ class CameraAgent:
         log.info("📁 Offline Queue: %s", self.offline_queue.queue_dir)
         log.info("=" * 60)
 
-        # Đăng ký các thread với Watchdog
         self.watchdog.register(ManagedThread(
             name="liveview", target_fn=self._fn_live_view,
             restart_on_crash=True, heartbeat_timeout=0
@@ -491,10 +505,7 @@ class CameraAgent:
             restart_on_crash=True, heartbeat_timeout=120
         ))
 
-        # Khởi động Watchdog
         self.watchdog.start(lambda: self.running)
-
-        # Thiết lập MQTT
         self._setup_mqtt()
 
         last_telemetry = time.time()
