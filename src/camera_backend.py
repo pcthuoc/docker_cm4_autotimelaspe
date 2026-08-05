@@ -63,8 +63,9 @@ class HybridCameraBackend:
                 self.use_real_hardware = False
                 return False
 
-            # Với lỗi -105, tối đa thử lại 6 lần (mỗi lần cách 2s = 12s tổng)
-            max_attempts = max(MAX_CAMERA_RETRIES, 6)
+            # Với lỗi -105 (timing): tối đa 10 lần × 2s = 20s polling sau warmup
+            # Tổng: WARMUP_DELAY_SEC (10s) + 20s polling = tối đa 30s, đảm bảo Nikon boot xong
+            max_attempts = max(MAX_CAMERA_RETRIES, 10)
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -269,8 +270,8 @@ class HybridCameraBackend:
             with self._lock:
                 try:
                     # ✅ BƯỚC 0: Kiểm tra máy ảnh thực sự sẵn sàng trước khi bấm màn trập
-                    if not self._wait_until_camera_ready(timeout=15.0):
-                        log.warning("⚠️ Máy ảnh chưa sẵn sàng sau 15s — Chuyển sang giả lập.")
+                    if not self._wait_until_camera_ready(timeout=20.0):
+                        log.warning("⚠️ Máy ảnh chưa sẵn sàng sau 20s — Chuyển sang giả lập.")
                         self.disconnect_real_camera()
                         # Rơi xuống simulated bên dưới
                         raise RuntimeError("Camera not ready")
