@@ -30,8 +30,21 @@ docker_cm4_autotimelapse/
 3. **Hybrid Camera Backend (gphoto2 USB + Fallback PIL)**:
    - Tự động nhận diện máy ảnh thật qua thư viện `gphoto2` (USB).
    - Tự động fallback sang giả lập ảnh bằng `PIL` nếu chưa cắm máy ảnh USB.
-4. **Độc lập 100%**:
-   - Không can thiệp hay sửa đổi bất kỳ mã nguồn Backend (Django) hay Frontend (React/Vite) nào của dự án chính.
+4. **Đọc Cảm biến Hardware Thật qua I2C Bus 10**:
+   - **SHT20 (`0x40`)**: Đọc Nhiệt độ (°C) và Độ ẩm (%RH) môi trường thực tế (Fallback CPU Temp nếu mất cảm biến).
+   - **ADS1115 (`0x49`, nguồn 3.3V)**: Đọc Điện áp Pin Li-ion 3S và Solar qua mạch cầu phân áp.
+     - **Kênh A0 (Pin 3S 0–12.6V)**: $R_{trên}=100k\Omega$, $R_{dưới}=22k\Omega$ $\rightarrow$ Hệ số nhân = **`5.545`** (`BATTERY_VOLTAGE_SCALE`).
+     - **Kênh A1 (Solar 0–24V/28V)**: $R_{trên}=180k\Omega$, $R_{dưới}=22k\Omega$ $\rightarrow$ Hệ số nhân = **`9.182`** (`SOLAR_VOLTAGE_SCALE`).
+
+---
+
+## ⚡ Cấu hình Biến Môi Trường I2C Telemetry
+
+| Biến môi trường | Mặc định | Mô tả |
+|---|---|---|
+| `I2C_BUS_ID` | `10` | Số Bus I2C trên CM4 (truy cập `/dev/i2c-10`) |
+| `BATTERY_VOLTAGE_SCALE` | `5.545` | Hệ số nhân điện áp Pin (100kΩ / 22kΩ) |
+| `SOLAR_VOLTAGE_SCALE` | `9.182` | Hệ số nhân điện áp Solar (180kΩ / 22kΩ) |
 
 ---
 
@@ -68,3 +81,4 @@ docker_cm4_autotimelapse/
    ```bash
    python3 camera_wifi_agent.py --code CAM-4YZ8X6 --power-gpio 16
    ```
+

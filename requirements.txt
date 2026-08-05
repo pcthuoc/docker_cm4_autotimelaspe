@@ -4,3 +4,4 @@ requests>=2.31.0
 gphoto2>=2.3.4
 RPi.GPIO>=0.7.1
 psutil>=6.0.0
+smbus2>=0.4.3

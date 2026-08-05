@@ -461,17 +461,144 @@ def get_sim_info(force=False) -> dict:
     return info
 
 
+# ── I2C SENSORS: SHT20 (0x40) & ADS1115 (0x49) trên I2C bus 10 ─────────────────
+
+def read_sht20_sensor(bus_id: int = 10, address: int = 0x40) -> tuple:
+    """
+    Đọc nhiệt độ (°C) và độ ẩm (%RH) từ cảm biến SHT20 ở địa chỉ 0x40 trên bus I2C 10.
+    Sử dụng phương pháp đọc trực tiếp 3 byte (MSB, LSB, CRC) đã kiểm thử thực tế.
+    Trả về (temp_c, humidity_percent) hoặc (None, None) nếu không kết nối/lỗi.
+    """
+    try:
+        import smbus2
+    except ImportError:
+        smbus2 = None
+
+    if smbus2 is None:
+        return None, None
+
+    try:
+        import time
+        with smbus2.SMBus(bus_id) as bus:
+            # 1. Đo Nhiệt độ (Lệnh 0xF3)
+            bus.write_byte(address, 0xF3)
+            time.sleep(0.1)  # Chờ 100ms cho cảm biến đo xong
+
+            msb = bus.read_byte(address)
+            lsb = bus.read_byte(address)
+            _crc = bus.read_byte(address)
+
+            raw_temp = (msb << 8) | lsb
+            temp_c = round(-46.85 + 175.72 * (raw_temp / 65536.0), 1)
+
+            # 2. Đo Độ ẩm (Lệnh 0xF5)
+            bus.write_byte(address, 0xF5)
+            time.sleep(0.05)
+
+            msb_h = bus.read_byte(address)
+            lsb_h = bus.read_byte(address)
+            _crc_h = bus.read_byte(address)
+
+            raw_hum = (msb_h << 8) | lsb_h
+            humi = round(-6.0 + 125.0 * (raw_hum / 65536.0), 1)
+            humi = max(0.0, min(100.0, humi))
+
+            return temp_c, humi
+    except Exception as e:
+        log.debug("⚠️ SHT20 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
+        return None, None
+
+
+def read_ads1115_voltages(bus_id: int = 10, address: int = 0x49) -> dict:
+    """
+    Đọc điện áp Pin (A0) và Solar (A1) từ ADS1115 (0x49) trên I2C bus 10.
+    Hệ số phân áp (mạch cầu phân áp với R_dưới = 22kΩ):
+      BATTERY_VOLTAGE_SCALE: Pin Li-ion 3S (100kΩ / 22kΩ) -> mặc định 5.545
+      SOLAR_VOLTAGE_SCALE: Solar 0-24V/28V (180kΩ / 22kΩ) -> mặc định 9.182
+    """
+    try:
+        import smbus2
+    except ImportError:
+        smbus2 = None
+
+    if smbus2 is None:
+        return {"battery_voltage": None, "solar_voltage": None}
+
+    bat_scale = float(os.environ.get("BATTERY_VOLTAGE_SCALE", "5.545"))
+    sol_scale = float(os.environ.get("SOLAR_VOLTAGE_SCALE", "9.182"))
+
+    def _read_channel(bus, channel: int):
+        try:
+            import time
+            mux = (0x4 + channel) << 12
+            # OS=1, MUX=100/101, PGA=001 (+/-4.096V), MODE=1 (Single-shot), DR=100 (128SPS), COMP=0003
+            config = 0x8000 | mux | 0x0200 | 0x0100 | 0x0083
+            config_bytes = [(config >> 8) & 0xFF, config & 0xFF]
+            bus.write_i2c_block_data(address, 0x01, config_bytes)
+            time.sleep(0.015)
+            data = bus.read_i2c_block_data(address, 0x00, 2)
+            raw = (data[0] << 8) | data[1]
+            if raw > 32767:
+                raw -= 65536
+            v_pin = (raw / 32767.0) * 4.096
+            return max(0.0, v_pin)
+        except Exception as ex:
+            log.debug("ADS1115 channel %d read error: %s", channel, ex)
+            return None
+
+    try:
+        with smbus2.SMBus(bus_id) as bus:
+            v0_pin = _read_channel(bus, 0)
+            v1_pin = _read_channel(bus, 1)
+
+            bat_v = round(v0_pin * bat_scale, 2) if v0_pin is not None else None
+            sol_v = round(v1_pin * sol_scale, 2) if v1_pin is not None else None
+
+            return {
+                "battery_voltage": bat_v,
+                "solar_voltage": sol_v,
+            }
+    except Exception as e:
+        log.debug("⚠️ ADS1115 [bus %d, addr 0x%02X] read error: %s", bus_id, address, e)
+        return {"battery_voltage": None, "solar_voltage": None}
+
+
 # ── TỔNG HỢP TELEMETRY ────────────────────────────────────────────────────────
 
 def collect_telemetry(camera_code: str, is_powered: bool, use_real_hw: bool,
                       firmware_version: str = "cm4-autotimelapse-v1.0") -> dict:
-    """Thu thập toàn bộ thông tin telemetry thực tế từ phần cứng CM4."""
+    """Thu thập toàn bộ thông tin telemetry thực tế từ phần cứng CM4 (System + I2C sensors)."""
     sim = get_sim_info()
     net = get_network_info()
     mem = get_memory_info()
     cpu_temp = get_cpu_temperature()
     cpu_pct = get_cpu_percent()
     uptime_s = get_uptime_seconds()
+
+    # Đọc cảm biến I2C (SHT20 @ 0x40, ADS1115 @ 0x49 trên i2c-10)
+    i2c_bus_id = int(os.environ.get("I2C_BUS_ID", "10"))
+    sht_temp, sht_humi = read_sht20_sensor(bus_id=i2c_bus_id, address=0x40)
+    adc_voltages = read_ads1115_voltages(bus_id=i2c_bus_id, address=0x49)
+
+    env_temp = sht_temp if sht_temp is not None else cpu_temp
+    humidity_pct = sht_humi
+
+    bat_v = adc_voltages.get("battery_voltage")
+    sol_v = adc_voltages.get("solar_voltage")
+
+    bat_pct = None
+    if bat_v is not None:
+        bat_pct = int(max(0.0, min(100.0, (bat_v - 10.5) / (12.6 - 10.5) * 100.0)))
+
+    sol_pct = None
+    if sol_v is not None:
+        sol_pct = int(max(0.0, min(100.0, (sol_v / 18.0) * 100.0)))
+
+    is_charging = False
+    if sol_v is not None and bat_v is not None:
+        is_charging = sol_v > (bat_v + 0.5)
+    elif sol_v is not None:
+        is_charging = sol_v > 5.0
 
     return {
         # Camera status
@@ -481,8 +608,9 @@ def collect_telemetry(camera_code: str, is_powered: bool, use_real_hw: bool,
         "camera_gpio_power": "ON" if is_powered else "OFF",
         "camera_hw_mode": "gphoto2_usb" if use_real_hw else "simulated_pil",
 
-        # System resources
-        "temperature_c": cpu_temp,
+        # System resources & Environment sensors
+        "temperature_c": env_temp,
+        "humidity_percent": humidity_pct,
         "cpu_percent": cpu_pct,
         "memory_used_mb": mem["used_mb"],
         "memory_percent": mem["percent"],
@@ -503,14 +631,15 @@ def collect_telemetry(camera_code: str, is_powered: bool, use_real_hw: bool,
         "sim_signal_dbm": sim["signal_dbm"],
         "sim_signal_percent": sim["signal_percent"],
 
-        # Placeholder solar/battery (populated by separate sensor if connected)
-        "battery_percent": 100,
-        "battery_voltage": 12.6,
-        "is_charging": True,
-        "solar_voltage": 0.0,
-        "solar_percent": 100,
+        # Real I2C solar/battery telemetry
+        "battery_percent": bat_pct,
+        "battery_voltage": bat_v,
+        "is_charging": is_charging,
+        "solar_voltage": sol_v,
+        "solar_percent": sol_pct,
 
         # Metadata
         "firmware_version": firmware_version,
         "ts": datetime.utcnow().isoformat() + "Z",
     }
+

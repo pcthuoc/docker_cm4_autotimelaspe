@@ -269,12 +269,16 @@ class CameraAgent:
             payload["threads"] = self.watchdog.status_report()
 
             self.mqtt_client.publish(self.t_data, json.dumps(payload), qos=1)
-            log.info("📡 Telemetry [CM4]: %.1f°C CPU%.0f%% RAM%.0f%% Signal:%ddBm[%s] CamPwr:%s Mode:%s",
-                     payload["temperature_c"], payload["cpu_percent"],
-                     payload["memory_percent"], payload["sim_signal_dbm"],
-                     payload["sim_source"],
-                     payload["camera_gpio_power"],
-                     payload["camera_hw_mode"])
+            hum_str = f" Hum:{payload['humidity_percent']}%" if payload.get("humidity_percent") is not None else ""
+            bat_str = f" Bat:{payload['battery_voltage']}V({payload.get('battery_percent', 0)}%)" if payload.get("battery_voltage") is not None else ""
+            sol_str = f" Sol:{payload['solar_voltage']}V" if payload.get("solar_voltage") is not None else ""
+            chg_str = "⚡" if payload.get("is_charging") else ""
+
+            log.info("📡 Telemetry [CM4]: %.1f°C%s CPU%.0f%% RAM%.0f%%%s%s%s Signal:%ddBm[%s] CamPwr:%s Mode:%s",
+                     payload["temperature_c"], hum_str, payload["cpu_percent"],
+                     payload["memory_percent"], bat_str, sol_str, chg_str,
+                     payload["sim_signal_dbm"], payload["sim_source"],
+                     payload["camera_gpio_power"], payload["camera_hw_mode"])
         except Exception as e:
             log.warning("Lỗi publish Telemetry: %s", e)
 
@@ -455,7 +459,7 @@ class CameraAgent:
         def on_disconnect(client, userdata, flags, rc, props=None):
             log.warning("⚠️ MQTT mất kết nối (rc=%s). Paho sẽ tự reconnect...", rc)
 
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.code)
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{self.code}_agent")
         client.username_pw_set(self.code, self.password)
         client.will_set(self.t_status, json.dumps({"online": False}), qos=1, retain=True)
         client.reconnect_delay_set(min_delay=2, max_delay=30)

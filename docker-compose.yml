@@ -17,7 +17,9 @@ services:
       - "/dev/bus/usb:/dev/bus/usb"
       - "/dev/gpiomem:/dev/gpiomem"
       - "/dev/mem:/dev/mem"
+      - "/dev/i2c-10:/dev/i2c-10"
     volumes:
+      - ./src:/app/src
       - ${DATA_DIR:-./data}/offline_queue:/app/offline_queue
       - /dev:/dev
       - /sys:/sys
