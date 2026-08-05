@@ -245,57 +245,57 @@ def _get_sim_info_mmcli() -> dict | None:
     }
 
 
-def _get_sim_info_at_commands(device="/dev/ttyUSB2") -> dict | None:
-    """Thử lấy thông tin mạng qua AT commands trực tiếp (modem USB)."""
-    if not os.path.exists(device):
-        # Tìm kiếm device khác
-        for dev in ("/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
-            if os.path.exists(dev):
-                device = dev
-                break
-        else:
-            return None
+def _get_sim_info_at_commands() -> dict | None:
+    """Thử lấy thông tin mạng qua AT commands trực tiếp trên serial port (non-blocking)."""
+    target_dev = None
+    for dev in ("/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
+        if os.path.exists(dev):
+            target_dev = dev
+            break
 
-    def at(cmd, timeout=2):
+    if not target_dev:
+        return None
+
+    def at_cmd(cmd: str, timeout=1.2) -> str:
+        """Gửi lệnh AT an toàn không dùng bash job control (%1) gây treo thread."""
         try:
-            result = _run_cmd(
-                f"echo -e '{cmd}\\r' | timeout {timeout} cat {device} & sleep {timeout}; kill %1 2>/dev/null",
-                timeout=timeout + 1
-            )
-            return result
+            cmd_line = f"exec 3<>{target_dev}; stty -F {target_dev} 115200 raw -echo 2>/dev/null; echo -e '{cmd}\\r' >&3; timeout {timeout} cat <&3 2>/dev/null; exec 3>&-"
+            return _run_cmd(cmd_line, timeout=timeout + 1.0)
         except Exception:
             return ""
 
-    # Lấy operator
-    ops_resp = at("AT+COPS?")
-    operator = ""
-    m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
-    if m:
-        operator = m.group(1)
+    try:
+        ops_resp = at_cmd("AT+COPS?")
+        signal_resp = at_cmd("AT+CSQ")
 
-    # Lấy signal
-    csq_resp = at("AT+CSQ")
-    signal_dbm = -99
-    m = re.search(r'\+CSQ:\s*(\d+)', csq_resp)
-    if m:
-        csq = int(m.group(1))
-        if csq != 99:
-            signal_dbm = -113 + csq * 2
+        operator = ""
+        m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
+        if m:
+            operator = m.group(1)
 
-    if not operator and signal_dbm == -99:
+        signal_dbm = -99
+        m = re.search(r'\+CSQ:\s*(\d+)', signal_resp)
+        if m:
+            csq = int(m.group(1))
+            if csq != 99:
+                signal_dbm = -113 + csq * 2
+
+        if not operator and signal_dbm == -99:
+            return None
+
+        return {
+            "source": "at_command",
+            "operator": operator or "Unknown",
+            "number": "Unknown",
+            "iccid": "Unknown",
+            "signal_percent": max(0, min(100, int((signal_dbm + 110) / 0.6))) if signal_dbm != -99 else 0,
+            "signal_dbm": signal_dbm,
+            "technology": "LTE/4G",
+            "state": "connected" if signal_dbm > -100 else "searching",
+            "online": signal_dbm > -100,
+        }
+    except Exception:
         return None
-
-    return {
-        "source": "at_command",
-        "operator": operator or "Unknown",
-        "number": "Unknown",
-        "iccid": "Unknown",
-        "signal_percent": max(0, min(100, int((signal_dbm + 110) / 0.6))) if signal_dbm != -99 else 0,
-        "signal_dbm": signal_dbm,
-        "technology": "Unknown",
-        "state": "connected" if signal_dbm > -100 else "searching",
-        "online": signal_dbm > -100,
-    }
 
 
 def _get_sim_info_wifi() -> dict:
