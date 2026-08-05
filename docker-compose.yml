@@ -1,8 +1,5 @@
 services:
   cm4-camera-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: pcthuoc/cm4_autotimelapse:latest
     container_name: cm4_camera_agent
     restart: unless-stopped
