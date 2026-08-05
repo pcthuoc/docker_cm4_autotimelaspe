@@ -20,7 +20,7 @@ services:
       - "/dev/gpiomem:/dev/gpiomem"
       - "/dev/mem:/dev/mem"
     volumes:
-      - ./data/offline_queue:/app/offline_queue
+      - ${OFFLINE_DATA_DIR:-./data/offline_queue}:/app/offline_queue
       - /dev:/dev
       - /sys:/sys
       - /run/udev:/run/udev:ro
@@ -48,4 +48,4 @@ services:
       - "9000:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data/portainer_data:/data
+      - ${PORTAINER_DATA_DIR:-./data/portainer_data}:/data
