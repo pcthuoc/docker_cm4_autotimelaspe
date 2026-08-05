@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  cm4-camera-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: docker_cm4_autotimelapse:latest
+    container_name: cm4_camera_agent
+    restart: unless-stopped
+    privileged: true
+    network_mode: "host"
+    devices:
+      - "/dev/bus/usb:/dev/bus/usb"
+      - "/dev/gpiomem:/dev/gpiomem"
+      - "/dev/mem:/dev/mem"
+    volumes:
+      - ./data/offline_queue:/app/offline_queue
+      - /dev:/dev
+      - /sys:/sys
+      - /run/udev:/run/udev:ro
+    env_file:
+      - .env
+    environment:
+      - CAMERA_CODE=${CAMERA_CODE:-CAM-4YZ8X6}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-o2hs_IojnvqSXlF1b9M-sg}
+      - MQTT_BROKER=${MQTT_BROKER:-cloud.congnghetimelapse.com}
+      - MQTT_PORT=${MQTT_PORT:-1884}
+      - SERVER_BASE=${SERVER_BASE:-http://cloud.congnghetimelapse.com}
+      - POWER_GPIO_PIN=${POWER_GPIO_PIN:-16}
+      - POWER_ACTIVE_HIGH=${POWER_ACTIVE_HIGH:-true}
+      - WARMUP_DELAY_SEC=${WARMUP_DELAY_SEC:-3.0}
+      - ALWAYS_KEEP_POWER=${ALWAYS_KEEP_POWER:-false}
+      - TELEMETRY_INTERVAL=${TELEMETRY_INTERVAL:-30}
+      - OFFLINE_QUEUE_DIR=${OFFLINE_QUEUE_DIR:-/app/offline_queue}
+      - OFFLINE_RETRY_INTERVAL=${OFFLINE_RETRY_INTERVAL:-60}
