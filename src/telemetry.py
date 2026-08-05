@@ -202,7 +202,6 @@ def _get_sim_info_mmcli() -> dict | None:
     if not modem_list:
         return None
 
-    # Lấy modem index đầu tiên
     m = re.search(r"/Modem/(\d+)", modem_list)
     if not m:
         return None
@@ -216,17 +215,21 @@ def _get_sim_info_mmcli() -> dict | None:
         match = re.search(pattern, text)
         return match.group(1).strip() if match else ""
 
-    operator  = _extract(r"operator name\s*:\s*(.+)", info)
+    operator   = _extract(r"operator name\s*:\s*(.+)", info)
     signal_pct = _extract(r"signal quality\s*:\s*(\d+)", info)
     technology = _extract(r"access tech\s*:\s*(.+)", info)
     state      = _extract(r"state\s*:\s*(.+)", info)
 
-    # Đọc thêm SIM info
-    sim_info = _run_cmd(f"mmcli -m {modem_id} --sim 2>/dev/null | head -5")
-    number    = _extract(r"number\s*:\s*(.+)", sim_info)
-    iccid     = _extract(r"iccid\s*:\s*(.+)", sim_info)
+    # Đọc chi tiết SIM object (/SIM/x)
+    number, iccid = "", ""
+    sim_path = _extract(r"sim\s*:\s*(.+)", info)
+    if sim_path and "none" not in sim_path.lower():
+        sim_m = re.search(r"/SIM/(\d+)", sim_path)
+        if sim_m:
+            sim_out = _run_cmd(f"mmcli -i {sim_m.group(1)} 2>/dev/null")
+            number = _extract(r"operator id\s*:\s*(.+)", sim_out) or _extract(r"number\s*:\s*(.+)", sim_out)
+            iccid  = _extract(r"iccid\s*:\s*(.+)", sim_out)
 
-    # Chuyển signal % thành dBm gần đúng (0% ~ -110dBm, 100% ~ -50dBm)
     signal_dbm = None
     if signal_pct:
         pct = min(100, max(0, int(signal_pct)))
@@ -246,7 +249,7 @@ def _get_sim_info_mmcli() -> dict | None:
 
 
 def _get_sim_info_at_commands() -> dict | None:
-    """Thử lấy thông tin mạng qua AT commands trực tiếp trên serial port (non-blocking)."""
+    """Thử lấy thông tin mạng qua AT commands (AT+CCID, AT+CSQ, AT+COPS, AT+CNUM) trên serial port."""
     target_dev = None
     for dev in ("/dev/ttyUSB2", "/dev/ttyUSB1", "/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyACM1"):
         if os.path.exists(dev):
@@ -257,7 +260,6 @@ def _get_sim_info_at_commands() -> dict | None:
         return None
 
     def at_cmd(cmd: str, timeout=1.2) -> str:
-        """Gửi lệnh AT an toàn không dùng bash job control (%1) gây treo thread."""
         try:
             cmd_line = f"exec 3<>{target_dev}; stty -F {target_dev} 115200 raw -echo 2>/dev/null; echo -e '{cmd}\\r' >&3; timeout {timeout} cat <&3 2>/dev/null; exec 3>&-"
             return _run_cmd(cmd_line, timeout=timeout + 1.0)
@@ -265,8 +267,10 @@ def _get_sim_info_at_commands() -> dict | None:
             return ""
 
     try:
-        ops_resp = at_cmd("AT+COPS?")
+        ops_resp    = at_cmd("AT+COPS?")
         signal_resp = at_cmd("AT+CSQ")
+        iccid_resp  = at_cmd("AT+CCID") or at_cmd("AT+CICCID") or at_cmd("AT+QCCID")
+        cnum_resp   = at_cmd("AT+CNUM")
 
         operator = ""
         m = re.search(r'\+COPS:\s*\d+,\d+,"([^"]+)"', ops_resp)
@@ -280,14 +284,24 @@ def _get_sim_info_at_commands() -> dict | None:
             if csq != 99:
                 signal_dbm = -113 + csq * 2
 
-        if not operator and signal_dbm == -99:
+        iccid = ""
+        m_iccid = re.search(r"(\d{18,22})", iccid_resp)
+        if m_iccid:
+            iccid = m_iccid.group(1)
+
+        number = ""
+        m_num = re.search(r'\+CNUM:\s*"[^"]*","(\+?\d+)"', cnum_resp)
+        if m_num:
+            number = m_num.group(1)
+
+        if not operator and signal_dbm == -99 and not iccid:
             return None
 
         return {
             "source": "at_command",
-            "operator": operator or "Unknown",
-            "number": "Unknown",
-            "iccid": "Unknown",
+            "operator": operator or "LTE/4G Modem",
+            "number": number or "N/A (Data SIM)",
+            "iccid": iccid or "Unknown",
             "signal_percent": max(0, min(100, int((signal_dbm + 110) / 0.6))) if signal_dbm != -99 else 0,
             "signal_dbm": signal_dbm,
             "technology": "LTE/4G",
