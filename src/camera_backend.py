@@ -158,18 +158,7 @@ class HybridCameraBackend:
                     log.info("✅ [CAMERA READY] Máy ảnh sẵn sàng sau %.1fs (poll lần %d)",
                              timeout - (deadline - time.monotonic()), attempt)
 
-                # Kiểm tra 3: Đảm bảo capture target là Memory Card nếu có thể
-                try:
-                    ct = config.get_child_by_name("capturetarget")
-                    current_target = str(ct.get_value()).lower()
-                    if "internal" in current_target or "ram" in current_target:
-                        # Nếu target đang là RAM/Internal, chờ thêm để thẻ nhớ mount
-                        log.info("⏳ [CAMERA READY] Thẻ nhớ chưa mount xong, đang chờ... (target=%s)", ct.get_value())
-                        time.sleep(poll_interval)
-                        continue
-                except Exception:
-                    pass
-
+                # Máy ảnh đã phản hồi config và battery -> sẵn sàng chụp ngay lập tức
                 return True
 
             except Exception as e:
