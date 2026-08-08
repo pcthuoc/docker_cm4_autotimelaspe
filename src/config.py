@@ -30,6 +30,9 @@ TELEMETRY_INTERVAL     = int(os.getenv("TELEMETRY_INTERVAL", "30"))
 OFFLINE_QUEUE_DIR      = os.getenv("OFFLINE_QUEUE_DIR", "/app/offline_queue")
 OFFLINE_RETRY_INTERVAL = int(os.getenv("OFFLINE_RETRY_INTERVAL", "60"))
 
+# Tắt hoàn toàn chế độ giả lập ảnh PIL (chỉ dùng máy ảnh thật)
+FORCE_REAL_ONLY    = os.getenv("FORCE_REAL_ONLY", "false").lower() in ("true", "1", "yes")
+
 # Danh sách thông số máy ảnh hỗ trợ
 SETTING_SPECS = {
     "iso":                   ("iso",                 True),

@@ -15,7 +15,7 @@ import threading
 from datetime import datetime
 from PIL import Image, ImageDraw
 
-from config import SETTING_SPECS, MAX_CAMERA_RETRIES
+from config import SETTING_SPECS, MAX_CAMERA_RETRIES, FORCE_REAL_ONLY
 from power_manager import CameraPowerManager
 from usb_utils import reset_all_camera_usb_devices
 
@@ -357,6 +357,10 @@ class HybridCameraBackend:
                     log.error("Lỗi chụp trên máy ảnh thật: %s — Đóng kết nối & Chuyển sang Giả lập...", e)
                     self.disconnect_real_camera()
 
+        if FORCE_REAL_ONLY:
+            log.warning("🚫 [FORCE_REAL_ONLY] Không có máy ảnh thật — bỏ qua, không giả lập PIL.")
+            return []
+
         log.info("📸 [SIMULATED CAMERA] Đang tạo khung hình giả lập JPEG bằng PIL...")
         time.sleep(0.5)
         img_bytes = self._generate_simulated_image(camera_code=camera_code)
@@ -374,6 +378,8 @@ class HybridCameraBackend:
                     return bytes(camera_file.get_data_and_size())
                 except Exception:
                     pass
+        if FORCE_REAL_ONLY:
+            return None
         return self._generate_simulated_image(width=640, height=424, title="CM4 Live View Stream")
 
     def _generate_simulated_image(self, width=1920, height=1080, title="AutoTimelapse CM4 Camera", camera_code="CAM-CM4"):
