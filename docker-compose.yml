@@ -8,13 +8,10 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"
+        max-size: "5m"
         max-file: "3"
-    devices:
-      - "/dev/bus/usb:/dev/bus/usb"
-      - "/dev/gpiomem:/dev/gpiomem"
-      - "/dev/mem:/dev/mem"
-      - "/dev/i2c-10:/dev/i2c-10"
+    tmpfs:
+      - /tmp:exec,mode=1777
     volumes:
       - ./src:/app/src
       - ${DATA_DIR:-./data}/offline_queue:/app/offline_queue
@@ -37,12 +34,3 @@ services:
       - OFFLINE_QUEUE_DIR=${OFFLINE_QUEUE_DIR:-/app/offline_queue}
       - OFFLINE_RETRY_INTERVAL=${OFFLINE_RETRY_INTERVAL:-60}
 
-  portainer:
-    image: portainer/portainer-ce:latest
-    container_name: portainer
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${DATA_DIR:-./data}/portainer_data:/data
