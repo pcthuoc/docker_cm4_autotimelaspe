@@ -393,7 +393,7 @@ def _get_sim_info_wifi() -> dict:
         "operator": f"WiFi: {ssid}" if ssid else "WiFi (SSID unknown)",
         "number": "N/A",
         "iccid": "N/A",
-        "signal_percent": max(0, min(100, int((signal_dbm + 100) * 2))) if signal_dbm else 50,
+        "signal_percent": max(0, min(100, int((signal_dbm + 100) * 2))) if signal_dbm is not None else 50,
         "signal_dbm": signal_dbm,
         "technology": "WiFi",
         "state": "connected" if ssid else "wifi_nosid",
@@ -441,14 +441,15 @@ def get_sim_info(force=False) -> dict:
             log.debug("WiFi info không khả dụng: %s", e)
 
     if not info:
-        # Simulated fallback cuối cùng
+        # Simulated fallback cuối cùng — tính signal_percent từ dBm thay vì hardcode
+        _fallback_dbm = -65
         info = {
             "source": "simulated",
             "operator": "CM4 WiFi/Ethernet (No Modem)",
             "number": "N/A",
             "iccid": "N/A",
-            "signal_percent": 80,
-            "signal_dbm": -65,
+            "signal_dbm": _fallback_dbm,
+            "signal_percent": max(0, min(100, int((_fallback_dbm + 100) * 2))),  # -65dBm → 70%
             "technology": "WiFi/Ethernet",
             "state": "connected",
             "online": True,

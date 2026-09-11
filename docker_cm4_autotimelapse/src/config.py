@@ -89,20 +89,20 @@ SETTING_SPECS = {
 
 # Cấu hình chất lượng ảnh mặc định (đặc biệt cho Canon EOS / kết nối 4G)
 # "S1" = Small 1 Fine (2880 x 1920, 5.5 MP, ~2-2.5 MB) - Đảm bảo tải mượt mà trên sim 4G
-DEFAULT_IMAGE_FORMAT = os.getenv("DEFAULT_IMAGE_FORMAT", "S1")
+DEFAULT_IMAGE_FORMAT = os.getenv("DEFAULT_IMAGE_FORMAT", "L")
 
 # Profile đặc biệt cho các dòng Canon EOS (detect qua model name từ gphoto2)
 # Dùng để tự động cấu hình khi detect thành công
 CANON_EOS_PROFILES = {
     # model_keyword: (extra_warmup_sec, disable_auto_poweroff, mirror_lock_off, notes)
-    "eos 6d":   {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "S1", "notes": "Boot USB chậm, tự ngủ sau 30s"},
-    "eos 5d":   {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "S1", "notes": "Mark III/IV, boot USB chậm"},
-    "eos 7d":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "S1", "notes": "Boot nhanh hơn 6D/5D"},
-    "eos 5ds":  {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "S1", "notes": "50MP, file lớn"},
-    "eos r":    {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "S1", "notes": "Mirrorless, không có mirror lock"},
-    "eos rp":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "S1", "notes": "Mirrorless entry"},
-    "eos r5":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "S1", "notes": "Mirrorless cao cấp"},
-    "eos r6":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "S1", "notes": "Mirrorless"},
+    "eos 6d":   {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "L", "notes": "Boot USB chậm, tự ngủ sau 30s"},
+    "eos 5d":   {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "L", "notes": "Mark III/IV, boot USB chậm"},
+    "eos 7d":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "L", "notes": "Boot nhanh hơn 6D/5D"},
+    "eos 5ds":  {"extra_warmup": 5.0, "disable_autopoweroff": True, "mirror_lock_off": True, "default_image_format": "L", "notes": "50MP, file lớn"},
+    "eos r":    {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "L", "notes": "Mirrorless, không có mirror lock"},
+    "eos rp":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "L", "notes": "Mirrorless entry"},
+    "eos r5":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "L", "notes": "Mirrorless cao cấp"},
+    "eos r6":   {"extra_warmup": 3.0, "disable_autopoweroff": True, "mirror_lock_off": False, "default_image_format": "L", "notes": "Mirrorless"},
 }
 
 SIM_INFO_TELEMETRY = {

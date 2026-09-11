@@ -138,7 +138,7 @@ class HybridCameraBackend:
                         w_fmt, _ = self._find_widget(config, ["imagequality", "imageformat", "imageformatsd"])
                         if w_fmt and not w_fmt.get_readonly():
                             choices = [str(w_fmt.get_choice(i)) for i in range(w_fmt.count_choices())] if w_fmt.get_type() in (5, 6) else []
-                            for preferred in [DEFAULT_IMAGE_FORMAT, "S1", "Small 1", "Small 1 Fine", "cS1", "JPEG Fine", "Fine"]:
+                            for preferred in [DEFAULT_IMAGE_FORMAT, "L", "Large Fine", "Large", "Large 1", "cL", "JPEG Fine", "Fine"]:
                                 if preferred in choices:
                                     w_fmt.set_value(preferred)
                                     cam.set_config(config)
@@ -402,7 +402,7 @@ class HybridCameraBackend:
                     current_fmt = str(fmt_widget.get_value())
                     wtype = fmt_widget.get_type()
                     choices = [str(fmt_widget.get_choice(i)) for i in range(fmt_widget.count_choices())] if wtype in (5, 6) else []
-                    for pref in [target_fmt, "S1", "Small 1", "Small 1 Fine", "cS1"]:
+                    for pref in [target_fmt, "L", "Large Fine", "Large", "Large 1", "cL"]:
                         if pref in choices:
                             if current_fmt != pref:
                                 fmt_widget.set_value(pref)
