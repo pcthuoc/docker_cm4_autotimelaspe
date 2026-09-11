@@ -548,8 +548,8 @@ class CameraAgent:
                 except Exception as e:
                     log.warning("Không publish cycle_capture_done: %s", e)
 
-            # Chỉ tắt nguồn nếu đang chạy chu kỳ tự động (schedule), không tắt khi đang tương tác / chụp thủ công / force_on
-            if not self.live_session_id and not self.always_keep_power and self.operating_mode != "interactive" and not self.force_power_on and triggered_by == "schedule":
+            # Tắt nguồn máy ảnh sau khi chụp xong để tiết kiệm điện và tránh nóng máy (trừ khi có liveview hoặc cấu hình always_keep_power)
+            if not self.live_session_id and not self.always_keep_power:
                 if self.capture_interval_sec == 0 or self.capture_interval_sec > 15:
                     # Ngắt kết nối USB gphoto2 trước khi tắt nguồn rơ-le
                     # để tránh gphoto2 giữ lock device, gây lỗi [-52][-7] ở lần chụp tiếp theo
@@ -753,7 +753,7 @@ class CameraAgent:
                 self.live_session_id = None
                 if self.backend:
                     self.backend.end_live_view()
-                if not self.always_keep_power and self.operating_mode != "interactive" and not self.force_power_on and (self.capture_interval_sec == 0 or self.capture_interval_sec > 15):
+                if not self.always_keep_power and (self.capture_interval_sec == 0 or self.capture_interval_sec > 15):
                     self.backend.disconnect_real_camera()
                     self.power_manager.power_off()
                 resp = {"type": cmd, "request_id": rid, "status": "ok",
