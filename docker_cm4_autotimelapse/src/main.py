@@ -132,6 +132,9 @@ class CameraAgent:
         self.t_data   = f"camera/{self.code}/data"
         self.t_status = f"camera/{self.code}/status"
 
+        self._power_off_timer = None
+        self._power_timer_lock = threading.Lock()
+
         self.load_schedule_config()
 
     # ── EC25 State File (đồng bộ Cưỡng Bức vs. Chu Kỳ) ──────────────────────
@@ -548,13 +551,10 @@ class CameraAgent:
                 except Exception as e:
                     log.warning("Không publish cycle_capture_done: %s", e)
 
-            # Tắt nguồn máy ảnh sau khi chụp xong để tiết kiệm điện và tránh nóng máy (trừ khi có liveview hoặc cấu hình always_keep_power)
+            # Trì hoãn 20s sau khi chụp xong rồi mới tắt nguồn để gphoto2 giải phóng hoàn toàn và máy ảnh ổn định
             if not self.live_session_id and not self.always_keep_power:
                 if self.capture_interval_sec == 0 or self.capture_interval_sec > 15:
-                    # Ngắt kết nối USB gphoto2 trước khi tắt nguồn rơ-le
-                    # để tránh gphoto2 giữ lock device, gây lỗi [-52][-7] ở lần chụp tiếp theo
-                    self.backend.disconnect_real_camera()
-                    self.power_manager.power_off()
+                    self._schedule_delayed_camera_off(delay=20.0)
 
             return media_ids
         finally:
@@ -645,9 +645,38 @@ class CameraAgent:
 
         threading.Thread(target=_do_shutdown, name="host_shutdown_thread", daemon=True).start()
 
+    def _cancel_delayed_camera_off(self):
+        """Hủy bộ hẹn giờ tắt nguồn nếu có lệnh chụp hoặc hoạt động mới."""
+        with self._power_timer_lock:
+            if self._power_off_timer and self._power_off_timer.is_alive():
+                self._power_off_timer.cancel()
+                self._power_off_timer = None
+                log.info("⏹️ [CAMERA POWER] Đã hủy hẹn giờ tắt nguồn máy ảnh do có hoạt động mới.")
+
+    def _schedule_delayed_camera_off(self, delay=20.0):
+        """Lên lịch tắt nguồn máy ảnh sau `delay` giây (mặc định 20s), có thể hủy nếu có chụp mới hoặc liveview."""
+        with self._power_timer_lock:
+            if self._power_off_timer and self._power_off_timer.is_alive():
+                self._power_off_timer.cancel()
+
+            def _do_off():
+                with self._power_timer_lock:
+                    if self._is_capturing or self.live_session_id or self.always_keep_power:
+                        log.info("🛑 [DELAYED-OFF] Bỏ qua tắt nguồn (đang chụp / liveview / always_keep_power)")
+                        return
+                    log.info("🔌 [DELAYED-OFF] Đã qua %.0fs sau chụp -> Ngắt kết nối USB & Tắt nguồn máy ảnh", delay)
+                    self.backend.disconnect_real_camera()
+                    self.power_manager.power_off()
+
+            self._power_off_timer = threading.Timer(delay, _do_off)
+            self._power_off_timer.name = "delayed_camera_off_timer"
+            self._power_off_timer.daemon = True
+            self._power_off_timer.start()
+            log.info("⏱️ [CAMERA POWER] Sẽ tắt nguồn máy ảnh sau %.0f giây nếu không có lệnh chụp mới...", delay)
+
     def _ensure_camera_ready(self):
         """Tự động BẬT NGUỒN GPIO 16 và kết nối USB máy ảnh thật khi người dùng tương tác từ Web UI."""
-        self.operating_mode = "interactive"
+        self._cancel_delayed_camera_off()
         was_off = not self.power_manager.is_powered
         if was_off:
             log.info("🔌 Máy ảnh đang TẮT — Tự động BẬT NGUỒN (GPIO 16) để thực hiện lệnh...")
@@ -684,6 +713,8 @@ class CameraAgent:
                 self.shutdown_host_cm4(delay=2.0)
 
             elif cmd == "power_off_camera":
+                self._cancel_delayed_camera_off()
+                self.backend.disconnect_real_camera()
                 self.power_manager.power_off()
                 resp = {"type": cmd, "request_id": rid, "status": "ok",
                         "data": {"camera_power": "off", "message": "Camera powered off"}}
@@ -754,8 +785,7 @@ class CameraAgent:
                 if self.backend:
                     self.backend.end_live_view()
                 if not self.always_keep_power and (self.capture_interval_sec == 0 or self.capture_interval_sec > 15):
-                    self.backend.disconnect_real_camera()
-                    self.power_manager.power_off()
+                    self._schedule_delayed_camera_off(delay=20.0)
                 resp = {"type": cmd, "request_id": rid, "status": "ok",
                         "data": {"live_view": False}}
 

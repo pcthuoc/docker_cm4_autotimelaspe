@@ -49,15 +49,17 @@ class CameraPowerManager:
         else:
             log.info("ℹ️ Không tìm thấy phần cứng RPi.GPIO. Quản lý nguồn chạy ở chế độ GIẢ LẬP (Simulated GPIO %d).", self.pin)
 
+    MIN_POWER_OFF_DURATION = 30.0  # Chống nháy nguồn: máy ảnh phải tắt ít nhất 30s trước khi bật lại
+
     def power_on(self):
-        """Bật nguồn máy ảnh và chờ phần cứng khởi động (warmup delay), có chống nháy relay."""
+        """Bật nguồn máy ảnh và chờ phần cứng khởi động (warmup delay), có chống nháy relay (30s)."""
         with self._lock:
             if not self.is_powered:
-                # Chống nháy relay: Nếu vừa tắt nguồn dưới 3s, chờ đủ 3s để tụ xả sạch tránh làm treo máy ảnh
+                # Chống nháy relay: Nếu vừa tắt nguồn dưới 30s, chờ đủ 30s để tụ xả sạch tránh làm treo máy ảnh
                 elapsed = time.monotonic() - self.last_power_off_time
-                if elapsed < 3.0:
-                    wait_sec = 3.0 - elapsed
-                    log.info("🛡️ [ANTI-BOUNCE] Chờ %.1fs để tụ máy ảnh xả sạch trước khi bật lại...", wait_sec)
+                if elapsed < self.MIN_POWER_OFF_DURATION:
+                    wait_sec = self.MIN_POWER_OFF_DURATION - elapsed
+                    log.info("🛡️ [ANTI-BOUNCE] Máy ảnh vừa tắt %.1fs trước. Chờ %.1fs (đủ 30s) để tụ xả sạch trước khi bật lại...", elapsed, wait_sec)
                     time.sleep(wait_sec)
 
                 log.info("🔌 [POWER ON] Đang BẬT NGUỒN máy ảnh qua GPIO %d...", self.pin)
@@ -87,11 +89,12 @@ class CameraPowerManager:
                 return True
             return False
 
-    def hard_cycle_power(self, power_off_delay=3.0):
-        """Tắt nguồn GPIO 16, chờ delay rồi bật lại để khởi động lại máy ảnh khi USB kẹt."""
-        log.warning("🔄 [HARD POWER CYCLE] Tiến hành khởi động lại nguồn máy ảnh qua GPIO %d...", self.pin)
+    def hard_cycle_power(self, power_off_delay=30.0):
+        """Tắt nguồn GPIO 16, chờ delay (ít nhất 30s) rồi bật lại để khởi động lại máy ảnh khi USB kẹt."""
+        delay = max(self.MIN_POWER_OFF_DURATION, power_off_delay)
+        log.warning("🔄 [HARD POWER CYCLE] Tiến hành tắt nguồn máy ảnh, chờ %.1fs trước khi bật lại...", delay)
         self.power_off()
-        time.sleep(power_off_delay)
+        time.sleep(delay)
         self.power_on()
 
     def cleanup(self):
